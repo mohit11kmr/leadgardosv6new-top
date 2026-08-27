@@ -15,6 +15,11 @@ import { AuditDetailView } from '../features/audits/AuditDetailView.js';
 import { MonitoringView } from '../features/monitoring/MonitoringView.js';
 import { MonitorDetailView } from '../features/monitoring/MonitorDetailView.js';
 import { BillingView } from '../features/billing/BillingView.js';
+import { AgencyDashboardView } from '../features/agency/AgencyDashboardView.js';
+import { ClientListView, ClientDetailView } from '../features/agency/ClientViews.js';
+import { ProspectCampaignsView, ProspectDetailView } from '../features/agency/ProspectViews.js';
+import { WidgetsView } from '../features/agency/WidgetViews.js';
+import { CompetitorRadarView } from '../features/agency/CompetitorViews.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
@@ -106,6 +111,62 @@ export function App() {
           element={
             <ProtectedRoute>
               <MonitorDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency"
+          element={
+            <ProtectedRoute>
+              <AgencyDashboardView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/clients"
+          element={
+            <ProtectedRoute>
+              <ClientListView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/clients/:id"
+          element={
+            <ProtectedRoute>
+              <ClientDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/prospects"
+          element={
+            <ProtectedRoute>
+              <ProspectCampaignsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/prospects/:id"
+          element={
+            <ProtectedRoute>
+              <ProspectDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/widgets"
+          element={
+            <ProtectedRoute>
+              <WidgetsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agency/competitors"
+          element={
+            <ProtectedRoute>
+              <CompetitorRadarView />
             </ProtectedRoute>
           }
         />

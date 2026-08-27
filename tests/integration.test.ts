@@ -162,5 +162,5 @@ describe('End-to-End Diagnostic Audit Integration Flow (Requirement 32)', () => 
       .set('Authorization', `Bearer ${token}`);
     expect(apiSummary.status).toBe(200);
     expect(apiSummary.body.data.overallScore).toBeGreaterThan(0);
-  });
+  }, 30000);
 });

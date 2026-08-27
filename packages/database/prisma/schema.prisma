@@ -129,6 +129,7 @@ model User {
   securityEvents          SecurityEvent[]
   passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  clientWorkspaceMembers  ClientWorkspaceMember[]
 }
 
 model Account {
@@ -196,27 +197,33 @@ model SecurityEvent {
 }
 
 model Organization {
-  id                String              @id @default(uuid())
-  name              String
-  slug              String              @unique
-  deletedAt         DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  members           OrganizationMember[]
-  websites          Website[]
-  audits            Audit[]
-  subscriptions     Subscription[]
-  payments          Payment[]
-  invoices          Invoice[]
-  billingEvents     BillingEvent[]
-  usageRecords      UsageRecord[]
-  apiKeys           ApiKey[]
-  webhooks          WebhookEndpoint[]
-  reports           Report[]
-  monitoringConfigs MonitoringConfig[]
-  monitoringRuns    MonitoringRun[]
-  monitoringAlerts  MonitoringAlert[]
-  testimonials      Testimonial[]
+  id                    String                 @id @default(uuid())
+  name                  String
+  slug                  String                 @unique
+  deletedAt             DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  members               OrganizationMember[]
+  websites              Website[]
+  audits                Audit[]
+  subscriptions         Subscription[]
+  payments              Payment[]
+  invoices              Invoice[]
+  billingEvents         BillingEvent[]
+  usageRecords          UsageRecord[]
+  apiKeys               ApiKey[]
+  webhooks              WebhookEndpoint[]
+  reports               Report[]
+  monitoringConfigs     MonitoringConfig[]
+  monitoringRuns        MonitoringRun[]
+  monitoringAlerts      MonitoringAlert[]
+  testimonials          Testimonial[]
+  clientWorkspaces      ClientWorkspace[]
+  prospectCampaigns     ProspectCampaign[]
+  prospects             Prospect[]
+  pitches               Pitch[]
+  widgets               Widget[]
+  competitorComparisons CompetitorComparison[]
 }
 
 model OrganizationMember {
@@ -232,24 +239,27 @@ model OrganizationMember {
 }
 
 model Website {
-  id               String            @id @default(uuid())
-  organizationId   String
-  url              String
-  normalizedUrl    String
-  domain           String
-  name             String
-  status           String            @default("ACTIVE")
-  deletedAt        DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domains          WebsiteDomain[]
-  settings         WebsiteSettings?
-  audits           Audit[]
-  monitoringConfig MonitoringConfig?
+  id                String            @id @default(uuid())
+  organizationId    String
+  clientWorkspaceId String?
+  url               String
+  normalizedUrl     String
+  domain            String
+  name              String
+  status            String            @default("ACTIVE")
+  deletedAt         DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace   ClientWorkspace?  @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+  domains           WebsiteDomain[]
+  settings          WebsiteSettings?
+  audits            Audit[]
+  monitoringConfig  MonitoringConfig?
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
+  @@index([clientWorkspaceId])
 }
 
 model WebsiteDomain {
@@ -297,6 +307,7 @@ model Audit {
   findings          AuditFinding[]
   score             AuditScore?
   reports           Report[]
+  prospects         Prospect[]
 
   @@index([organizationId, createdAt])
   @@index([websiteId, status])
@@ -665,4 +676,158 @@ model Testimonial {
   organizationId String
   quote          String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model ClientWorkspace {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  name                  String
+  slug                  String
+  status                String                  @default("ACTIVE") // ACTIVE, ARCHIVED, ONBOARDING
+  contactName           String?
+  contactEmail          String?
+  notes                 String?
+  branding              Json?                   // { logoUrl, companyName, website, supportEmail, primaryColor, secondaryColor, footer }
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  archivedAt            DateTime?
+  organization          Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  websites              Website[]
+  members               ClientWorkspaceMember[]
+  widgets               Widget[]
+  prospectCampaigns     ProspectCampaign[]
+  competitorComparisons CompetitorComparison[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status, archivedAt])
+}
+
+model ClientWorkspaceMember {
+  id                String          @id @default(uuid())
+  clientWorkspaceId String
+  userId            String
+  role              String          @default("MEMBER")
+  createdAt         DateTime        @default(now())
+  workspace         ClientWorkspace @relation(fields: [clientWorkspaceId], references: [id], onDelete: Cascade)
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clientWorkspaceId, userId])
+}
+
+model ProspectCampaign {
+  id                String           @id @default(uuid())
+  organizationId    String
+  clientWorkspaceId String?
+  name              String
+  source            String           @default("MANUAL") // CSV, MANUAL, SEARCH
+  status            String           @default("DRAFT")  // DRAFT, QUEUED, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED
+  targetCount       Int              @default(0)
+  processedCount    Int              @default(0)
+  qualifiedCount    Int              @default(0)
+  errorMessage      String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace   ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+  prospects         Prospect[]
+
+  @@index([organizationId, status])
+  @@index([clientWorkspaceId])
+}
+
+model Prospect {
+  id                   String           @id @default(uuid())
+  campaignId           String
+  organizationId       String
+  url                  String
+  normalizedUrl        String
+  domain               String
+  businessName         String?
+  industry             String?
+  location             String?
+  status               String           @default("DISCOVERED") // DISCOVERED, VALIDATED, AUDITED, QUALIFIED, CONTACTED, CONVERTED, DISMISSED
+  leadScore            Int?
+  criticalFindings     Int              @default(0)
+  highFindings         Int              @default(0)
+  potentialOpportunity String?
+  auditId              String?
+  audit                Audit?           @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  lastCheckedAt        DateTime?
+  source               String           @default("MANUAL")
+  notes                String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  campaign             ProspectCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  organization         Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pitches              Pitch[]
+
+  @@index([campaignId, status])
+  @@index([organizationId, domain])
+}
+
+model Pitch {
+  id             String       @id @default(uuid())
+  prospectId     String
+  organizationId String
+  provider       String       @default("GEMINI")
+  model          String       @default("gemini-2.5-pro")
+  promptVersion  String       @default("v1")
+  language       String       @default("en")
+  tone           String       @default("PROFESSIONAL") // PROFESSIONAL, DIRECT, CONSULTATIVE, URGENT
+  subject        String
+  opening        String
+  problem        String
+  businessImpact String
+  recommendation String
+  callToAction   String
+  content        String
+  tokensUsed     Int?
+  estimatedCost  Float?
+  createdAt      DateTime     @default(now())
+  prospect       Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([prospectId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model Widget {
+  id                String           @id @default(uuid())
+  organizationId    String
+  clientWorkspaceId String?
+  name              String
+  tokenHash         String           @unique
+  allowedOrigins    String[]
+  theme             String           @default("LIGHT") // LIGHT, DARK, AUTO
+  displayMode       String           @default("EMBED") // EMBED, MODAL, FLOATING_BUTTON
+  enabled           Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace   ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, enabled])
+}
+
+model CompetitorComparison {
+  id                String           @id @default(uuid())
+  organizationId    String
+  clientWorkspaceId String?
+  name              String
+  targetUrl         String
+  competitorUrls    String[]
+  status            String           @default("DRAFT") // DRAFT, QUEUED, RUNNING, COMPLETED, FAILED
+  comparisonData    Json?
+  strengths         Json?
+  weaknesses        Json?
+  opportunities     Json?
+  lastRunAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace   ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
 }

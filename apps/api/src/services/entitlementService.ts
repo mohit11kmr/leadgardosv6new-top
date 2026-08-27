@@ -8,6 +8,12 @@ export interface PlanEntitlements {
   whiteLabel: boolean;
   reports: number;
   prospectLimit: number;
+  clientLimit: number;
+  prospectCampaignLimit: number;
+  prospectLimitPerCampaign: number;
+  pitchLimit: number;
+  widgetLimit: number;
+  competitorLimit: number;
 }
 
 export const DEFAULT_FREE_ENTITLEMENTS: PlanEntitlements = {
@@ -18,6 +24,60 @@ export const DEFAULT_FREE_ENTITLEMENTS: PlanEntitlements = {
   whiteLabel: false,
   reports: 3,
   prospectLimit: 0,
+  clientLimit: 0,
+  prospectCampaignLimit: 0,
+  prospectLimitPerCampaign: 0,
+  pitchLimit: 0,
+  widgetLimit: 0,
+  competitorLimit: 0,
+};
+
+export const DEFAULT_PRO_ENTITLEMENTS: PlanEntitlements = {
+  auditsPerMonth: 100,
+  websites: 5,
+  monitoring: true,
+  apiAccess: true,
+  whiteLabel: false,
+  reports: 50,
+  prospectLimit: 50,
+  clientLimit: 0,
+  prospectCampaignLimit: 2,
+  prospectLimitPerCampaign: 50,
+  pitchLimit: 25,
+  widgetLimit: 1,
+  competitorLimit: 2,
+};
+
+export const DEFAULT_AGENCY_ENTITLEMENTS: PlanEntitlements = {
+  auditsPerMonth: 1000,
+  websites: 25,
+  monitoring: true,
+  apiAccess: true,
+  whiteLabel: true,
+  reports: 500,
+  prospectLimit: 5000,
+  clientLimit: 25,
+  prospectCampaignLimit: 50,
+  prospectLimitPerCampaign: 500,
+  pitchLimit: 500,
+  widgetLimit: 10,
+  competitorLimit: 10,
+};
+
+export const DEFAULT_ENTERPRISE_ENTITLEMENTS: PlanEntitlements = {
+  auditsPerMonth: 10000,
+  websites: 100,
+  monitoring: true,
+  apiAccess: true,
+  whiteLabel: true,
+  reports: 5000,
+  prospectLimit: 50000,
+  clientLimit: 100,
+  prospectCampaignLimit: 250,
+  prospectLimitPerCampaign: 2500,
+  pitchLimit: 5000,
+  widgetLimit: 50,
+  competitorLimit: 50,
 };
 
 export class EntitlementService {
@@ -39,10 +99,23 @@ export class EntitlementService {
     });
 
     if (activeSub?.plan) {
+      const planCode = activeSub.plan.code;
+      const baseDefaults =
+        planCode === 'AGENCY'
+          ? DEFAULT_AGENCY_ENTITLEMENTS
+          : planCode === 'ENTERPRISE'
+          ? DEFAULT_ENTERPRISE_ENTITLEMENTS
+          : planCode === 'PRO'
+          ? DEFAULT_PRO_ENTITLEMENTS
+          : DEFAULT_FREE_ENTITLEMENTS;
+
       return {
         subscription: activeSub,
         plan: activeSub.plan,
-        entitlements: activeSub.plan.entitlements as unknown as PlanEntitlements,
+        entitlements: {
+          ...baseDefaults,
+          ...(activeSub.plan.entitlements as object),
+        } as PlanEntitlements,
       };
     }
 
@@ -63,7 +136,10 @@ export class EntitlementService {
     return {
       subscription: null,
       plan: freePlan,
-      entitlements: freePlan.entitlements as unknown as PlanEntitlements,
+      entitlements: {
+        ...DEFAULT_FREE_ENTITLEMENTS,
+        ...(freePlan.entitlements as object),
+      } as PlanEntitlements,
     };
   }
 
@@ -155,6 +231,125 @@ export class EntitlementService {
       };
     }
     return { allowed: true };
+  }
+
+  async canManageClients(organizationId: string): Promise<{ allowed: boolean; reason?: string; limit: number }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (entitlements.clientLimit <= 0) {
+      return {
+        allowed: false,
+        reason: 'Client Workspace management is an Agency/Enterprise feature. Upgrade your subscription.',
+        limit: 0,
+      };
+    }
+
+    const currentCount = await db.clientWorkspace.count({
+      where: { organizationId, archivedAt: null },
+    });
+
+    if (currentCount >= entitlements.clientLimit) {
+      return {
+        allowed: false,
+        reason: `Client workspace limit reached (${currentCount}/${entitlements.clientLimit}). Upgrade to Enterprise for more workspaces.`,
+        limit: entitlements.clientLimit,
+      };
+    }
+
+    return { allowed: true, limit: entitlements.clientLimit };
+  }
+
+  async canCreateProspectCampaign(
+    organizationId: string,
+    targetCount = 1
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (entitlements.prospectCampaignLimit <= 0) {
+      return {
+        allowed: false,
+        reason: '500-Site Prospect Hunter requires an Agency or Enterprise subscription.',
+      };
+    }
+
+    if (targetCount > entitlements.prospectLimitPerCampaign) {
+      return {
+        allowed: false,
+        reason: `Prospect campaign exceeds your plan limit of ${entitlements.prospectLimitPerCampaign} prospects per campaign.`,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  async canGeneratePitch(organizationId: string): Promise<{ allowed: boolean; reason?: string }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (entitlements.pitchLimit <= 0) {
+      return {
+        allowed: false,
+        reason: 'AI Cold Pitch Generation requires a Pro, Agency, or Enterprise subscription.',
+      };
+    }
+    return { allowed: true };
+  }
+
+  async canUseWhiteLabel(organizationId: string): Promise<{ allowed: boolean; reason?: string }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (!entitlements.whiteLabel) {
+      return {
+        allowed: false,
+        reason: 'White-label custom branding and reports require an Agency or Enterprise subscription.',
+      };
+    }
+    return { allowed: true };
+  }
+
+  async canManageWidgets(organizationId: string): Promise<{ allowed: boolean; reason?: string; limit: number }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (entitlements.widgetLimit <= 0) {
+      return {
+        allowed: false,
+        reason: 'Diagnostic Studio Widgets require a Pro, Agency, or Enterprise subscription.',
+        limit: 0,
+      };
+    }
+
+    const currentCount = await db.widget.count({
+      where: { organizationId },
+    });
+
+    if (currentCount >= entitlements.widgetLimit) {
+      return {
+        allowed: false,
+        reason: `Widget limit reached (${currentCount}/${entitlements.widgetLimit}). Upgrade your plan to create more widgets.`,
+        limit: entitlements.widgetLimit,
+      };
+    }
+
+    return { allowed: true, limit: entitlements.widgetLimit };
+  }
+
+  async canManageCompetitors(organizationId: string): Promise<{ allowed: boolean; reason?: string; limit: number }> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    if (entitlements.competitorLimit <= 0) {
+      return {
+        allowed: false,
+        reason: 'Competitive Weakness Radar requires a Pro, Agency, or Enterprise subscription.',
+        limit: 0,
+      };
+    }
+
+    const currentCount = await db.competitorComparison.count({
+      where: { organizationId },
+    });
+
+    if (currentCount >= entitlements.competitorLimit) {
+      return {
+        allowed: false,
+        reason: `Competitive Radar limit reached (${currentCount}/${entitlements.competitorLimit}). Upgrade your plan.`,
+        limit: entitlements.competitorLimit,
+      };
+    }
+
+    return { allowed: true, limit: entitlements.competitorLimit };
   }
 
   async getEntitlementsOverview(organizationId: string) {

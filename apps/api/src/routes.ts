@@ -24,6 +24,13 @@ import { authSecurityService } from './services/authSecurityService.js';
 import { billingService } from './services/billingService.js';
 import { entitlementService } from './services/entitlementService.js';
 import { monitoringService } from './services/monitoringService.js';
+import { agencyClientService } from './services/agency/agencyClientService.js';
+import { prospectService } from './services/agency/prospectService.js';
+import { pitchService } from './services/agency/pitchService.js';
+import { widgetService } from './services/agency/widgetService.js';
+import { competitorService } from './services/agency/competitorService.js';
+import { agencyOverviewService } from './services/agency/agencyOverviewService.js';
+import { whiteLabelService } from './services/agency/whiteLabelService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
 import { requirePermission } from './middleware/rbac.js';
 import {
@@ -121,6 +128,28 @@ apiRouter.get('/billing/plans', async (_request, response, next) => {
     response.json({ success: true, data: plans });
   } catch (error) {
     next(error);
+  }
+});
+
+// --- Public Whitelisted Widget Endpoint (Unauthenticated, Origin-Restricted) ---
+apiRouter.get('/public/widgets/:widgetId', async (request: Request, response: Response, next: NextFunction) => {
+  try {
+    const originHeader = request.headers.origin;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    const widgetId = request.params.widgetId as string;
+    const data = await widgetService.getPublicWidgetData(widgetId, origin);
+    response.json({ success: true, data });
+  } catch (error: any) {
+    if (error.code === 'ORIGIN_FORBIDDEN') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'ORIGIN_FORBIDDEN', message: error.message },
+      });
+    }
+    response.status(404).json({
+      success: false,
+      error: { code: 'WIDGET_NOT_FOUND', message: error.message || 'Widget not found' },
+    });
   }
 });
 
@@ -1315,6 +1344,444 @@ apiRouter.get('/audits/:id/whatsapp-optimizer', requirePermission('AUDIT_VIEW'),
       });
     }
     response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// PHASE 7: AGENCY PLATFORM ENDPOINTS
+// ==========================================
+
+// Agency Overview
+apiRouter.get('/agency/overview', requirePermission('CLIENT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const data = await agencyOverviewService.getOverview(request.auth!.organizationId);
+    response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Client Workspaces
+apiRouter.post('/agency/clients', requirePermission('CLIENT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100),
+      contactName: z.string().optional(),
+      contactEmail: z.string().email().optional().or(z.literal('')),
+      notes: z.string().optional(),
+      branding: z.record(z.unknown()).optional(),
+    });
+    const input = schema.parse(request.body);
+    const client = await agencyClientService.createClient(request.auth!.organizationId, {
+      ...input,
+      contactEmail: input.contactEmail || undefined,
+    });
+    response.status(201).json({ success: true, data: client });
+  } catch (error: any) {
+    if (error.code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/clients', requirePermission('CLIENT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      status: z.string().optional(),
+      search: z.string().optional(),
+      cursor: z.string().optional(),
+      limit: z.coerce.number().optional(),
+    });
+    const query = schema.parse(request.query);
+    const data = await agencyClientService.listClients(request.auth!.organizationId, query);
+    response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/clients/:id', requirePermission('CLIENT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const client = await agencyClientService.getClient(request.auth!.organizationId, request.params.id);
+    if (!client) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Client workspace not found' },
+      });
+    }
+    response.json({ success: true, data: client });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/agency/clients/:id', requirePermission('CLIENT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100).optional(),
+      status: z.enum(['ACTIVE', 'ARCHIVED', 'ONBOARDING']).optional(),
+      contactName: z.string().optional(),
+      contactEmail: z.string().email().optional().or(z.literal('')),
+      notes: z.string().optional(),
+      branding: z.record(z.unknown()).optional(),
+    });
+    const input = schema.parse(request.body);
+    const client = await agencyClientService.updateClient(
+      request.auth!.organizationId,
+      request.params.id,
+      {
+        ...input,
+        contactEmail: input.contactEmail || undefined,
+      }
+    );
+    response.json({ success: true, data: client });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/agency/clients/:id', requirePermission('CLIENT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await agencyClientService.archiveClient(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, message: 'Client workspace archived' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Client Website Assignment
+apiRouter.post('/agency/clients/:id/websites', requirePermission('CLIENT_ASSIGN'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({ websiteId: z.string().uuid() });
+    const { websiteId } = schema.parse(request.body);
+    const updated = await agencyClientService.assignWebsite(
+      request.auth!.organizationId,
+      request.params.id,
+      websiteId
+    );
+    response.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/agency/clients/:id/websites/:websiteId', requirePermission('CLIENT_ASSIGN'), async (request: AuthRequest, response, next) => {
+  try {
+    const updated = await agencyClientService.removeWebsite(
+      request.auth!.organizationId,
+      request.params.id,
+      request.params.websiteId
+    );
+    response.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 500-Site Prospect Hunter
+apiRouter.post('/agency/prospect-campaigns', requirePermission('PROSPECT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100),
+      clientWorkspaceId: z.string().uuid().optional(),
+      sourceType: z.enum(['MANUAL', 'CSV']).default('MANUAL'),
+      items: z
+        .array(
+          z.object({
+            url: z.string(),
+            businessName: z.string().optional(),
+            industry: z.string().optional(),
+            location: z.string().optional(),
+          })
+        )
+        .optional(),
+      csvContent: z.string().optional(),
+    });
+    const input = schema.parse(request.body);
+    const campaign = await prospectService.createCampaign(request.auth!.organizationId, input);
+    response.status(201).json({ success: true, data: campaign });
+  } catch (error: any) {
+    if (error.code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/prospect-campaigns', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const campaigns = await prospectService.listCampaigns(request.auth!.organizationId);
+    response.json({ success: true, data: campaigns });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/prospect-campaigns/:id', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const campaign = await prospectService.getCampaign(request.auth!.organizationId, request.params.id);
+    if (!campaign) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Prospect campaign not found' },
+      });
+    }
+    response.json({ success: true, data: campaign });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/agency/prospect-campaigns/:id/start', requirePermission('PROSPECT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await prospectService.startCampaign(request.auth!.organizationId, request.params.id);
+    response.status(202).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/agency/prospect-campaigns/:id/pause', requirePermission('PROSPECT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await prospectService.pauseCampaign(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/agency/prospect-campaigns/:id/cancel', requirePermission('PROSPECT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await prospectService.cancelCampaign(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/prospect-campaigns/:id/prospects', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      status: z.string().optional(),
+      minScore: z.coerce.number().optional(),
+      maxScore: z.coerce.number().optional(),
+      cursor: z.string().optional(),
+      limit: z.coerce.number().optional(),
+    });
+    const query = schema.parse(request.query);
+    const data = await prospectService.getProspects(request.auth!.organizationId, request.params.id, query);
+    response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Grounded AI Cold Pitch Generator
+apiRouter.post('/agency/prospects/:id/pitches', requirePermission('PITCH_GENERATE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      tone: z.enum(['PROFESSIONAL', 'DIRECT', 'CONSULTATIVE', 'URGENT']).optional(),
+      language: z.string().optional(),
+    });
+    const options = schema.parse(request.body);
+    const pitch = await pitchService.generatePitch(request.auth!.organizationId, request.params.id, options);
+    response.status(201).json({ success: true, data: pitch });
+  } catch (error: any) {
+    if (error.code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/prospects/:id/pitches', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const pitches = await pitchService.listPitches(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: pitches });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Diagnostic Studio Widgets
+apiRouter.post('/agency/widgets', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100),
+      clientWorkspaceId: z.string().uuid().optional(),
+      allowedOrigins: z.array(z.string()).default([]),
+      theme: z.enum(['LIGHT', 'DARK', 'AUTO']).default('LIGHT'),
+      displayMode: z.enum(['EMBED', 'MODAL', 'FLOATING_BUTTON']).default('EMBED'),
+    });
+    const input = schema.parse(request.body);
+    const widget = await widgetService.createWidget(request.auth!.organizationId, input);
+    response.status(201).json({ success: true, data: widget });
+  } catch (error: any) {
+    if (error.code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/widgets', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const widgets = await widgetService.listWidgets(request.auth!.organizationId);
+    response.json({ success: true, data: widgets });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/widgets/:id', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const widget = await widgetService.getWidget(request.auth!.organizationId, request.params.id);
+    if (!widget) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Widget not found' },
+      });
+    }
+    response.json({ success: true, data: widget });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/agency/widgets/:id', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100).optional(),
+      allowedOrigins: z.array(z.string()).optional(),
+      theme: z.enum(['LIGHT', 'DARK', 'AUTO']).optional(),
+      displayMode: z.enum(['EMBED', 'MODAL', 'FLOATING_BUTTON']).optional(),
+      enabled: z.boolean().optional(),
+    });
+    const input = schema.parse(request.body);
+    const updated = await widgetService.updateWidget(request.auth!.organizationId, request.params.id, input);
+    response.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/agency/widgets/:id', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await widgetService.deleteWidget(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, message: 'Widget deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Competitive Radar
+apiRouter.post('/agency/competitors', requirePermission('COMPETITOR_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(1).max(100),
+      targetUrl: z.string(),
+      competitorUrls: z.array(z.string()).min(1).max(5),
+      clientWorkspaceId: z.string().uuid().optional(),
+    });
+    const input = schema.parse(request.body);
+    const comparison = await competitorService.createCompetitorComparison(request.auth!.organizationId, input);
+    response.status(201).json({ success: true, data: comparison });
+  } catch (error: any) {
+    if (error.code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/competitors', requirePermission('COMPETITOR_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const comparisons = await competitorService.listCompetitorComparisons(request.auth!.organizationId);
+    response.json({ success: true, data: comparisons });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/agency/competitors/:id', requirePermission('COMPETITOR_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const comparison = await competitorService.getCompetitorComparison(request.auth!.organizationId, request.params.id);
+    if (!comparison) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Competitor comparison not found' },
+      });
+    }
+    response.json({ success: true, data: comparison });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/agency/competitors/:id/run', requirePermission('COMPETITOR_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await competitorService.runCompetitorComparison(request.auth!.organizationId, request.params.id);
+    response.status(202).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/agency/competitors/:id', requirePermission('COMPETITOR_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await competitorService.deleteCompetitorComparison(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, message: 'Competitor comparison deleted' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// White-Label Report Preview & Export
+apiRouter.get('/agency/reports/:id/preview', requirePermission('AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const report = await db.report.findFirst({
+      where: { id: request.params.id, organizationId: request.auth!.organizationId },
+      include: { audit: { include: { website: true, score: true, findings: true } } },
+    });
+    if (!report || !report.audit) {
+      return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Report not found' } });
+    }
+
+    const branding = await whiteLabelService.resolveBranding(
+      request.auth!.organizationId,
+      report.audit.website.clientWorkspaceId
+    );
+
+    const html = whiteLabelService.generateBrandedHtml({
+      title: `${report.audit.website.name} Diagnostic Audit Report`,
+      auditDate: report.audit.createdAt.toISOString().split('T')[0]!,
+      websiteUrl: report.audit.website.url,
+      overallScore: report.audit.score?.overall ?? 70,
+      findingsCount: report.audit.findings.length,
+      criticalFindings: report.audit.findings.filter((f) => f.severity === 'CRITICAL').length,
+      branding,
+    });
+
+    response.setHeader('Content-Type', 'text/html');
+    response.send(html);
   } catch (error) {
     next(error);
   }

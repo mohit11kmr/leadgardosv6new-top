@@ -16,6 +16,7 @@ export function Shell({ children }: ShellProps) {
     { label: 'Websites', path: '/websites', icon: '🌐' },
     { label: 'Audits', path: '/audits', icon: '🔍' },
     { label: 'Watchdog 24/7', path: '/monitoring', icon: '⚡' },
+    { label: 'Agency Portal', path: '/agency', icon: '🏢' },
     { label: 'Billing & Plans', path: '/billing', icon: '💳' },
     { label: 'Sessions & Security', path: '/security/sessions', icon: '🛡️' },
   ];

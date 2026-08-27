@@ -4,6 +4,8 @@ import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { processAudit } from './audit.js';
 import { processMonitoringJob, type MonitoringJobData } from './monitoring/index.js';
+import { prospectWorker } from './agency/prospectWorker.js';
+import { competitorWorker } from './agency/competitorWorker.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -14,6 +16,8 @@ export const queueNames = [
   'monitoring',
   'report',
   'prospect',
+  'agency-prospect',
+  'agency-competitor',
   'email',
   'webhook',
   'billing-webhook',
