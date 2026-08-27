@@ -4,6 +4,7 @@ import { config } from '@leadguard/config';
 import { db } from '@leadguard/database';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { validateExternalUrl } from '@leadguard/shared';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -68,6 +69,26 @@ export function getStorageProvider(): StorageProvider {
   return new LocalStorageProvider();
 }
 
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function sanitizeCssColor(color: string, fallback: string): string {
+  if (/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color)) {
+    return color;
+  }
+  if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,\s*[\d.]+\s*)?\)$/.test(color)) {
+    return color;
+  }
+  return fallback;
+}
+
 export function generateReportHtml(options: {
   title: string;
   auditDate: string;
@@ -84,17 +105,25 @@ export function generateReportHtml(options: {
   };
 }): string {
   const { title, auditDate, websiteUrl, overallScore, findingsCount, criticalFindings, branding } = options;
-  const primary = branding.primaryColor || '#2563eb';
-  const secondary = branding.secondaryColor || '#1e293b';
+  const primary = sanitizeCssColor(branding.primaryColor, '#2563eb');
+  const secondary = sanitizeCssColor(branding.secondaryColor, '#1e293b');
+
+  const safeTitle = escapeHtml(title);
+  const safeCompanyName = escapeHtml(branding.companyName || 'LeadGuard OS');
+  const safeWebsiteUrl = escapeHtml(websiteUrl);
+  const safeAuditDate = escapeHtml(auditDate);
+  const safeFooterText = branding.footerText ? escapeHtml(branding.footerText) : null;
+  const safeLogo = branding.logoUrl ? `<img src="${escapeHtml(branding.logoUrl)}" alt="Logo" style="max-height: 40px; margin-right: 15px;" />` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${title}</title>
+  <title>${safeTitle}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 40px; color: #1e293b; background: #fff; }
     .header { border-bottom: 2px solid ${primary}; padding-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    .brandingHeader { display: flex; align-items: center; }
     .companyName { font-size: 24px; font-weight: 800; color: ${primary}; }
     .scoreBadge { background: ${primary}; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 28px; font-weight: 900; }
     .statsGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 40px 0; }
@@ -105,18 +134,21 @@ export function generateReportHtml(options: {
 </head>
 <body>
   <div class="header">
-    <div class="companyName">${branding.companyName}</div>
+    <div class="brandingHeader">
+      ${safeLogo}
+      <div class="companyName">${safeCompanyName}</div>
+    </div>
     <div class="scoreBadge">${overallScore} / 100</div>
   </div>
-  <h1>${title}</h1>
-  <p><strong>Target URL:</strong> ${websiteUrl} | <strong>Audit Date:</strong> ${auditDate}</p>
+  <h1>${safeTitle}</h1>
+  <p><strong>Target URL:</strong> ${safeWebsiteUrl} | <strong>Audit Date:</strong> ${safeAuditDate}</p>
   <div class="statsGrid">
     <div class="statCard"><div class="statValue">${overallScore}/100</div><div>Overall Health</div></div>
     <div class="statCard"><div class="statValue">${findingsCount}</div><div>Total Diagnostics</div></div>
     <div class="statCard"><div class="statValue">${criticalFindings}</div><div>Critical Flaws</div></div>
   </div>
   <div class="footer">
-    ${branding.footerText || `Generated automatically by ${branding.companyName} Diagnostic Intelligence.`}
+    ${safeFooterText || `Generated automatically by ${safeCompanyName} Diagnostic Intelligence.`}
   </div>
 </body>
 </html>`;
@@ -160,6 +192,17 @@ export async function processPdfJob(job: Job<PdfJobData>) {
       secondaryColor: '#1e293b',
     };
 
+    // SSRF Check on custom logo URL if present
+    let safeLogoUrl: string | null = null;
+    if (branding.logoUrl) {
+      try {
+        const parsed = await validateExternalUrl(branding.logoUrl);
+        safeLogoUrl = parsed.toString();
+      } catch {
+        safeLogoUrl = null;
+      }
+    }
+
     const renderedHtml = generateReportHtml({
       title: report.title,
       auditDate: report.createdAt.toISOString().split('T')[0]!,
@@ -167,7 +210,10 @@ export async function processPdfJob(job: Job<PdfJobData>) {
       overallScore: snapshot.score?.overall ?? 75,
       findingsCount: snapshot.findings?.length ?? 0,
       criticalFindings: snapshot.findings?.filter((f: any) => f.severity === 'CRITICAL').length ?? 0,
-      branding,
+      branding: {
+        ...branding,
+        logoUrl: safeLogoUrl,
+      },
     });
 
     // Generate formatted standalone PDF/HTML export artifact

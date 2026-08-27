@@ -390,11 +390,27 @@ export class ReportService {
         (err as unknown as { code: string }).code = 'PASSWORD_REQUIRED';
         throw err;
       }
+
+      // Check brute-force attempts on this share link (max 10 attempts per minute)
+      const attemptKey = `ratelimit:sharelink:${link.id}`;
+      const attempts = await connection.incr(attemptKey);
+      if (attempts === 1) {
+        await connection.expire(attemptKey, 60);
+      }
+      if (attempts > 10) {
+        const err = new Error('Too many password attempts. Please try again later.');
+        (err as unknown as { code: string }).code = 'RATE_LIMIT_EXCEEDED';
+        throw err;
+      }
+
       if (!verifyPassword(password, link.passwordHash)) {
         const err = new Error('Incorrect password');
         (err as unknown as { code: string }).code = 'INVALID_PASSWORD';
         throw err;
       }
+
+      // On successful password, clear attempts
+      await connection.del(attemptKey).catch(() => {});
     }
 
     // Increment access count & update lastAccessedAt asynchronously

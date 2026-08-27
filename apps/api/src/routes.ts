@@ -221,6 +221,7 @@ apiRouter.get('/reports/share/:token', async (request: Request, response, next) 
 apiRouter.use('/public/audits', publicAuditRouter);
 apiRouter.use('/public/reports', publicReportRouter);
 apiRouter.use('/public/monitors', publicMonitoringRouter);
+apiRouter.use('/public/monitoring', publicMonitoringRouter);
 apiRouter.use('/public/testimonials', publicTestimonialsRouter);
 apiRouter.use('/public', openApiRouter);
 
@@ -2012,7 +2013,10 @@ apiRouter.post('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request:
       description,
     });
     response.status(201).json({ success: true, data: result });
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message && (error.message.includes('Only credential-free') || error.message.includes('Private or metadata') || error.message.includes('Host resolves to a private address') || error.message.includes('Invalid URL'))) {
+      return response.status(400).json({ success: false, error: { code: 'INVALID_URL', message: error.message } });
+    }
     next(error);
   }
 });

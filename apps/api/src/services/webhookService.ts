@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from '@leadguard/database';
+import { validateExternalUrl } from '@leadguard/shared';
 import { outboxService, webhookQueue } from './outboxService.js';
 import { randomUUID } from 'node:crypto';
 
@@ -61,6 +62,7 @@ export class WebhookService {
       description?: string;
     }
   ) {
+    await validateExternalUrl(data.url);
     const rawSecret = `whsec_${randomBytes(24).toString('hex')}`;
 
     const endpoint = await db.webhookEndpoint.create({

@@ -15,6 +15,14 @@ export type ApiScope =
   | 'MONITORING_RUN'
   | 'WEBSITE_READ';
 
+export type RateLimitCategory = 'AUDIT_RUN' | 'MONITORING_RUN' | 'READ';
+
+export const RATE_LIMITS: Record<RateLimitCategory, { keyLimit: number; orgLimit: number; windowSec: number }> = {
+  AUDIT_RUN: { keyLimit: 10, orgLimit: 30, windowSec: 60 },
+  MONITORING_RUN: { keyLimit: 15, orgLimit: 45, windowSec: 60 },
+  READ: { keyLimit: 120, orgLimit: 300, windowSec: 60 },
+};
+
 export const VALID_SCOPES: ApiScope[] = [
   'AUDIT_READ',
   'AUDIT_RUN',
@@ -64,14 +72,6 @@ export class ApiKeyService {
         keyHash,
         scopes: normalizedScopes,
         expiresAt,
-      },
-      select: {
-        id: true,
-        name: true,
-        keyPrefix: true,
-        scopes: true,
-        expiresAt: true,
-        createdAt: true,
       },
     });
 
@@ -157,32 +157,46 @@ export class ApiKeyService {
   }
 
   /**
-   * Checks Redis rate limiting for an API key (e.g. 60 requests per minute)
+   * Checks Redis rate limiting for an API key and Organization (per category)
    */
   async checkRateLimit(
     apiKeyId: string,
-    limit = 60,
-    windowSec = 60
-  ): Promise<{ allowed: boolean; remaining: number; reset: number }> {
-    const key = `ratelimit:apikey:${apiKeyId}`;
-    const current = await redis.incr(key);
+    organizationId: string,
+    category: RateLimitCategory = 'READ'
+  ): Promise<{ allowed: boolean; remaining: number; reset: number; limit: number }> {
+    const configLimits = RATE_LIMITS[category] || RATE_LIMITS.READ;
+    const keyKey = `ratelimit:apikey:${apiKeyId}:${category}`;
+    const orgKey = `ratelimit:org:${organizationId}:${category}`;
 
-    if (current === 1) {
-      await redis.expire(key, windowSec);
+    const [keyCount, orgCount] = await Promise.all([
+      redis.incr(keyKey),
+      redis.incr(orgKey),
+    ]);
+
+    if (keyCount === 1) {
+      await redis.expire(keyKey, configLimits.windowSec);
+    }
+    if (orgCount === 1) {
+      await redis.expire(orgKey, configLimits.windowSec);
     }
 
-    const ttl = await redis.ttl(key);
-    const remaining = Math.max(0, limit - current);
+    const ttl = await redis.ttl(keyKey);
+    const remainingKey = Math.max(0, configLimits.keyLimit - keyCount);
+    const remainingOrg = Math.max(0, configLimits.orgLimit - orgCount);
+    const remaining = Math.min(remainingKey, remainingOrg);
+
+    const allowed = keyCount <= configLimits.keyLimit && orgCount <= configLimits.orgLimit;
 
     return {
-      allowed: current <= limit,
+      allowed,
       remaining,
-      reset: ttl > 0 ? ttl : windowSec,
+      reset: ttl > 0 ? ttl : configLimits.windowSec,
+      limit: configLimits.keyLimit,
     };
   }
 
   /**
-   * Asynchronously records API usage
+   * Asynchronously records API usage (data minimization - no secrets or auth tokens)
    */
   async recordUsage(data: {
     organizationId: string;
@@ -211,9 +225,9 @@ export class ApiKeyService {
   }
 
   /**
-   * Middleware requiring a valid API key with specified scope
+   * Middleware requiring a valid API key with specified scope and category-based rate limits
    */
-  requireScope(requiredScope?: ApiScope) {
+  requireScope(requiredScope?: ApiScope, category: RateLimitCategory = 'READ') {
     return async (req: Request, res: Response, next: NextFunction) => {
       const startTime = Date.now();
       const authHeader = req.headers.authorization;
@@ -244,9 +258,9 @@ export class ApiKeyService {
         });
       }
 
-      // Check Rate Limit
-      const rateLimit = await this.checkRateLimit(key.id);
-      res.setHeader('X-RateLimit-Limit', '60');
+      // Check Rate Limit (Key-level + Org-level)
+      const rateLimit = await this.checkRateLimit(key.id, key.organizationId, category);
+      res.setHeader('X-RateLimit-Limit', rateLimit.limit.toString());
       res.setHeader('X-RateLimit-Remaining', rateLimit.remaining.toString());
       res.setHeader('X-RateLimit-Reset', rateLimit.reset.toString());
 
@@ -256,7 +270,7 @@ export class ApiKeyService {
           success: false,
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
-            message: `API rate limit exceeded. Try again in ${rateLimit.reset} seconds.`,
+            message: `API rate limit exceeded for ${category}. Try again in ${rateLimit.reset} seconds.`,
           },
         });
       }
@@ -275,7 +289,7 @@ export class ApiKeyService {
       (req as any).apiKey = key;
       (req as any).organizationId = key.organizationId;
 
-      // Track usage on response finish
+      // Track sanitized usage on response finish
       res.on('finish', () => {
         const latencyMs = Date.now() - startTime;
         this.recordUsage({
