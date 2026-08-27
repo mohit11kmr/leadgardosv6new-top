@@ -7,6 +7,8 @@ import { processMonitoringJob, type MonitoringJobData } from './monitoring/index
 import { prospectWorker } from './agency/prospectWorker.js';
 import { competitorWorker } from './agency/competitorWorker.js';
 import { pitchWorker } from './agency/pitchWorker.js';
+import { pdfWorker } from './report/pdfWorker.js';
+import { webhookWorker } from './webhook/webhookWorker.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 

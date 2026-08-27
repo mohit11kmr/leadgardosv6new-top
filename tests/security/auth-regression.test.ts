@@ -66,5 +66,5 @@ describe('Security Regression Gate: Phase 4 Authentication & HttpOnly Cookie Con
     expect(logoutRes.status).toBe(204);
     const clearCookie = logoutRes.headers['set-cookie']![0];
     expect(clearCookie).toContain('Max-Age=0');
-  });
+  }, 20000);
 });

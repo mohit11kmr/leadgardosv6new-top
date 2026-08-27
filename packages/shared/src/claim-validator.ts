@@ -142,10 +142,10 @@ export class ClaimValidator {
         });
       }
     } else {
-      // Neutral mode: Ensure pitch doesn't claim "we identified specific flaw" when findings are empty
-      if (/we\s+(?:identified|discovered|found|verified|observed|detected)|(?:critical|technical)\s+(?:flaws|issues|bottlenecks|problems)|flaws\s+on/i.test(problem)) {
-        problem = `LeadGuard reviewed the available diagnostic baseline data for ${context.domain}. While no critical individual flaw was isolated, overall conversion readiness stands at ${context.leadScore}/100.`;
-      }
+      // Neutral mode: Ensure pitch doesn't claim flaws or problems when findings are empty
+      problem = `LeadGuard reviewed the available diagnostic baseline data.`;
+      businessImpact = `Diagnostic conversion readiness score is ${context.leadScore}/100.`;
+      recommendation = `Continuous health and diagnostic monitoring is recommended.`;
 
       claimReferences.push({
         claim: `Diagnostic readiness baseline evaluation: ${context.leadScore}/100`,

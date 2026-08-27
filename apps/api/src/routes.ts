@@ -33,6 +33,16 @@ import { agencyOverviewService } from './services/agency/agencyOverviewService.j
 import { whiteLabelService } from './services/agency/whiteLabelService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
 import { requirePermission } from './middleware/rbac.js';
+import { reportService } from './services/reportService.js';
+import { adminService } from './services/adminService.js';
+import { settingsService } from './services/settingsService.js';
+import { testimonialService } from './services/testimonialService.js';
+import { webhookService } from './services/webhookService.js';
+import { publicAuditRouter } from './controllers/public/publicAuditController.js';
+import { publicReportRouter } from './controllers/public/publicReportController.js';
+import { publicMonitoringRouter } from './controllers/public/publicMonitoringController.js';
+import { publicTestimonialsRouter } from './controllers/public/publicTestimonialsController.js';
+import { openApiRouter } from './openapi.js';
 import {
   authLimiter,
   passwordResetLimiter,
@@ -182,6 +192,37 @@ apiRouter.get('/public/widgets/:widgetId', async (request: Request, response: Re
     });
   }
 });
+
+// --- Public Report Share Link Access (No authentication required) ---
+apiRouter.get('/reports/share/:token', async (request: Request, response, next) => {
+  try {
+    const password = request.query.password as string | undefined;
+    const token = request.params.token as string;
+    const result = await reportService.accessPublicReport(token, password);
+    response.json({ success: true, data: result });
+  } catch (error: any) {
+    if (error.code === 'PASSWORD_REQUIRED' || error.code === 'INVALID_PASSWORD') {
+      return response.status(401).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    if (error.code === 'SHARE_LINK_NOT_FOUND' || error.code === 'SHARE_LINK_EXPIRED' || error.code === 'INVALID_SHARE_TOKEN') {
+      return response.status(404).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+// --- Public Developer API & OpenAPI (API Key Authenticated or Open Docs) ---
+apiRouter.use('/public/audits', publicAuditRouter);
+apiRouter.use('/public/reports', publicReportRouter);
+apiRouter.use('/public/monitors', publicMonitoringRouter);
+apiRouter.use('/public/testimonials', publicTestimonialsRouter);
+apiRouter.use('/public', openApiRouter);
 
 // --- Auth Routes ---
 apiRouter.post('/auth/register', authLimiter, async (request, response, next) => {
@@ -1867,3 +1908,324 @@ apiRouter.get('/agency/reports/:id/preview', requirePermission('AUDIT_VIEW'), as
     next(error);
   }
 });
+
+// ==========================================
+// PHASE 8: REPORTS & CRYPTOGRAPHIC SHARE LINKS
+// ==========================================
+
+// Create immutable report snapshot from audit
+apiRouter.post('/reports', requirePermission('REPORT_CREATE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { auditId, title, clientWorkspaceId, templateVersion } = request.body;
+    if (!auditId) {
+      return response.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: 'auditId is required' } });
+    }
+    const report = await reportService.createReportSnapshot(request.auth!.organizationId, auditId, {
+      title,
+      clientWorkspaceId,
+      templateVersion,
+    });
+    response.status(201).json({ success: true, data: report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// List immutable reports with pagination
+apiRouter.get('/reports', requirePermission('REPORT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const result = await reportService.listReports(request.auth!.organizationId, { cursor, limit });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get report details & immutable snapshot
+apiRouter.get('/reports/:id', requirePermission('REPORT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const report = await reportService.getReport(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create cryptographic share link
+apiRouter.post('/reports/:id/share', requirePermission('REPORT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { password, expiresInDays } = request.body;
+    const result = await reportService.createShareLink(request.auth!.organizationId, request.params.id, {
+      password,
+      expiresInDays,
+    });
+    response.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Revoke share link
+apiRouter.delete('/reports/:id/share/:shareId', requirePermission('REPORT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const revoked = await reportService.revokeShareLink(request.auth!.organizationId, request.params.id, request.params.shareId);
+    response.json({ success: true, message: 'Share link revoked', revoked });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Enqueue async PDF generation
+apiRouter.post('/reports/:id/pdf', requirePermission('REPORT_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await reportService.enqueuePdfGeneration(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// PHASE 8: WEBHOOKS MANAGEMENT
+// ==========================================
+
+apiRouter.get('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const endpoints = await webhookService.listEndpoints(request.auth!.organizationId);
+    response.json({ success: true, data: endpoints });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { url, events, description } = request.body;
+    if (!url) {
+      return response.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: 'url is required' } });
+    }
+    const result = await webhookService.createEndpoint(request.auth!.organizationId, {
+      url,
+      events: events || ['*'],
+      description,
+    });
+    response.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/webhooks/:id', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await webhookService.deleteEndpoint(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, message: 'Webhook endpoint deleted' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/webhooks/:id/ping', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await webhookService.sendTestPing(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// PHASE 8: ADMIN PLATFORM
+// ==========================================
+
+apiRouter.get('/admin/metrics', requirePermission('ADMIN_DASHBOARD_VIEW'), async (_request: AuthRequest, response, next) => {
+  try {
+    const metrics = await adminService.getAdminMetrics();
+    response.json({ success: true, data: metrics });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/admin/users', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const search = request.query.search as string | undefined;
+    const result = await adminService.listUsers({ cursor, limit, search });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/admin/users/:id/status', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { disabled, reason } = request.body;
+    const ip = getClientIp(request);
+    const user = await adminService.setUserDisabled(request.auth!.sub, request.params.id, Boolean(disabled), reason, ip);
+    response.json({ success: true, data: { id: user.id, isDisabled: user.isDisabled } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/admin/users/:id/revoke-sessions', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const ip = getClientIp(request);
+    const count = await adminService.revokeUserSessions(request.auth!.sub, request.params.id, ip);
+    response.json({ success: true, message: `Revoked ${count} active sessions` });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/admin/organizations', requirePermission('ORG_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const search = request.query.search as string | undefined;
+    const result = await adminService.listOrganizations({ cursor, limit, search });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/admin/organizations/:id/status', requirePermission('ORG_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { suspended, reason } = request.body;
+    const ip = getClientIp(request);
+    const org = await adminService.setOrganizationSuspended(request.auth!.sub, request.params.id, Boolean(suspended), reason, ip);
+    response.json({ success: true, data: { id: org.id, isSuspended: org.isSuspended } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/admin/audit-logs', requirePermission('SECURITY_AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const resourceType = request.query.resourceType as string | undefined;
+    const result = await adminService.listAdminAuditLogs({ cursor, limit, resourceType });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// PHASE 8: SETTINGS & SECURITY
+// ==========================================
+
+apiRouter.get('/settings/profile', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const profile = await settingsService.getProfile(request.auth!.sub);
+    response.json({ success: true, data: profile });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/settings/profile', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { name, timezone, locale } = request.body;
+    const profile = await settingsService.updateProfile(request.auth!.sub, { name, timezone, locale });
+    response.json({ success: true, data: profile });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/settings/notifications', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const prefs = await settingsService.getNotificationPreferences(request.auth!.sub, request.auth!.organizationId);
+    response.json({ success: true, data: prefs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/settings/notifications', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { eventTypes, enabled } = request.body;
+    const prefs = await settingsService.updateNotificationPreferences(request.auth!.sub, request.auth!.organizationId, {
+      eventTypes,
+      enabled,
+    });
+    response.json({ success: true, data: prefs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/settings/sessions', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const sessions = await settingsService.getActiveSessions(request.auth!.sub);
+    response.json({ success: true, data: sessions });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/settings/sessions/:id', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await settingsService.revokeSession(request.auth!.sub, request.params.id);
+    response.json({ success: true, message: 'Session revoked' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// PHASE 8: TESTIMONIALS MODERATION
+// ==========================================
+
+apiRouter.get('/testimonials', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const status = request.query.status as string | undefined;
+    const testimonials = await testimonialService.listTestimonials(request.auth!.organizationId, { status });
+    response.json({ success: true, data: testimonials });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/testimonials', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { authorName, companyName, role, content, rating, clientWorkspaceId } = request.body;
+    const testimonial = await testimonialService.createTestimonial(request.auth!.organizationId, {
+      authorName,
+      companyName,
+      role,
+      content,
+      rating,
+      clientWorkspaceId,
+    });
+    response.status(201).json({ success: true, data: testimonial });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/testimonials/:id/status', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const { status } = request.body;
+    const testimonial = await testimonialService.updateTestimonialStatus(request.auth!.organizationId, request.params.id, status);
+    response.json({ success: true, data: testimonial });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/testimonials/:id', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await testimonialService.deleteTestimonial(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, message: 'Testimonial deleted' });
+  } catch (error) {
+    next(error);
+  }
+});
+

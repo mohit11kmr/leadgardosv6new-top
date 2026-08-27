@@ -20,6 +20,20 @@ import { ClientListView, ClientDetailView } from '../features/agency/ClientViews
 import { ProspectCampaignsView, ProspectDetailView } from '../features/agency/ProspectViews.js';
 import { WidgetsView } from '../features/agency/WidgetViews.js';
 import { CompetitorRadarView } from '../features/agency/CompetitorViews.js';
+import { ReportListView } from '../features/reports/ReportListView.js';
+import { ReportDetailView } from '../features/reports/ReportDetailView.js';
+import { PublicReportView } from '../features/reports/PublicReportView.js';
+import { DeveloperDashboardView } from '../features/developer/DeveloperDashboardView.js';
+import { ApiKeysView } from '../features/developer/ApiKeysView.js';
+import { WebhooksView } from '../features/developer/WebhooksView.js';
+import { AdminDashboardView } from '../features/admin/AdminDashboardView.js';
+import { AdminUsersView } from '../features/admin/AdminUsersView.js';
+import { AdminOrgsView } from '../features/admin/AdminOrgsView.js';
+import { AdminAuditLogsView } from '../features/admin/AdminAuditLogsView.js';
+import { SettingsView } from '../features/settings/SettingsView.js';
+import { NotificationSettingsView } from '../features/settings/NotificationSettingsView.js';
+import { SecuritySettingsView } from '../features/settings/SecuritySettingsView.js';
+import { TestimonialsView } from '../features/testimonials/TestimonialsView.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
@@ -58,6 +72,9 @@ export function App() {
         <Route path="/password-reset" element={<PasswordResetRequestView />} />
         <Route path="/password-reset/confirm" element={<PasswordResetConfirmView />} />
 
+        {/* Public Share Links (Unauthenticated) */}
+        <Route path="/public/reports/:token" element={<PublicReportView />} />
+
         <Route
           path="/dashboard"
           element={
@@ -95,6 +112,22 @@ export function App() {
           element={
             <ProtectedRoute>
               <AuditDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute>
+              <ReportListView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports/:id"
+          element={
+            <ProtectedRoute>
+              <ReportDetailView />
             </ProtectedRoute>
           }
         />
@@ -167,6 +200,102 @@ export function App() {
           element={
             <ProtectedRoute>
               <CompetitorRadarView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/developer"
+          element={
+            <ProtectedRoute>
+              <DeveloperDashboardView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/developer/api-keys"
+          element={
+            <ProtectedRoute>
+              <ApiKeysView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/developer/webhooks"
+          element={
+            <ProtectedRoute>
+              <WebhooksView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <AdminDashboardView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute>
+              <AdminUsersView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/organizations"
+          element={
+            <ProtectedRoute>
+              <AdminOrgsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/audit"
+          element={
+            <ProtectedRoute>
+              <AdminAuditLogsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <SettingsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings/profile"
+          element={
+            <ProtectedRoute>
+              <SettingsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings/notifications"
+          element={
+            <ProtectedRoute>
+              <NotificationSettingsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings/security"
+          element={
+            <ProtectedRoute>
+              <SecuritySettingsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/testimonials"
+          element={
+            <ProtectedRoute>
+              <TestimonialsView />
             </ProtectedRoute>
           }
         />

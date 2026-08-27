@@ -15,10 +15,14 @@ export function Shell({ children }: ShellProps) {
     { label: 'Dashboard', path: '/dashboard', icon: '📊' },
     { label: 'Websites', path: '/websites', icon: '🌐' },
     { label: 'Audits', path: '/audits', icon: '🔍' },
+    { label: 'Reports', path: '/reports', icon: '📑' },
     { label: 'Watchdog 24/7', path: '/monitoring', icon: '⚡' },
     { label: 'Agency Portal', path: '/agency', icon: '🏢' },
+    { label: 'Developer API', path: '/developer', icon: '🔑' },
+    { label: 'Testimonials', path: '/testimonials', icon: '💬' },
     { label: 'Billing & Plans', path: '/billing', icon: '💳' },
-    { label: 'Sessions & Security', path: '/security/sessions', icon: '🛡️' },
+    { label: 'Settings', path: '/settings', icon: '⚙️' },
+    { label: 'Admin Platform', path: '/admin', icon: '🛡️' },
   ];
 
   return (

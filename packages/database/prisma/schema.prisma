@@ -119,7 +119,12 @@ enum AlertStatus {
 model User {
   id                      String                   @id @default(uuid())
   email                   String                   @unique
+  name                    String?
   passwordHash            String
+  timezone                String?                  @default("UTC")
+  locale                  String?                  @default("en")
+  isDisabled              Boolean                  @default(false)
+  disabledReason          String?
   emailVerifiedAt         DateTime?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -130,6 +135,8 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
   clientWorkspaceMembers  ClientWorkspaceMember[]
+  adminAuditLogs          AdminAuditLog[]
+  notificationPreferences NotificationPreference[]
 }
 
 model Account {
@@ -200,6 +207,8 @@ model Organization {
   id                    String                 @id @default(uuid())
   name                  String
   slug                  String                 @unique
+  isSuspended           Boolean                @default(false)
+  suspendedReason       String?
   deletedAt             DateTime?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
@@ -212,7 +221,10 @@ model Organization {
   billingEvents         BillingEvent[]
   usageRecords          UsageRecord[]
   apiKeys               ApiKey[]
+  apiUsages             ApiUsage[]
   webhooks              WebhookEndpoint[]
+  webhookDeliveries     WebhookDelivery[]
+  outboxEvents          OutboxEvent[]
   reports               Report[]
   monitoringConfigs     MonitoringConfig[]
   monitoringRuns        MonitoringRun[]
@@ -225,6 +237,7 @@ model Organization {
   widgets               Widget[]
   competitorComparisons CompetitorComparison[]
   pitchGenerations      PitchGeneration[]
+  notificationPreferences NotificationPreference[]
 }
 
 model OrganizationMember {
@@ -389,13 +402,27 @@ model AuditScore {
 }
 
 model Report {
-  id             String            @id @default(uuid())
-  organizationId String
-  auditId        String
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  audit          Audit             @relation(fields: [auditId], references: [id])
-  versions       ReportVersion[]
-  shareLinks     ReportShareLink[]
+  id              String            @id @default(uuid())
+  organizationId  String
+  auditId         String
+  title           String            @default("LeadGuard Diagnostic Audit Report")
+  version         Int               @default(1)
+  reportVersion   String            @default("v1")
+  templateVersion String            @default("v1")
+  brandingVersion String            @default("v1")
+  status          String            @default("READY") // READY, ARCHIVED
+  snapshotData    Json?
+  pdfPath         String?
+  pdfStatus       String            @default("NONE") // NONE, QUEUED, GENERATING, READY, FAILED
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now()) @updatedAt
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  audit           Audit             @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  versions        ReportVersion[]
+  shareLinks      ReportShareLink[]
+
+  @@index([organizationId, createdAt])
+  @@index([auditId])
 }
 
 model ReportVersion {
@@ -409,12 +436,18 @@ model ReportVersion {
 }
 
 model ReportShareLink {
-  id        String    @id @default(uuid())
-  reportId  String
-  tokenHash String    @unique
-  expiresAt DateTime?
-  revokedAt DateTime?
-  report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  id             String    @id @default(uuid())
+  reportId       String
+  tokenHash      String    @unique
+  passwordHash   String?
+  accessCount    Int       @default(0)
+  lastAccessedAt DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  report         Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, revokedAt])
 }
 
 model MonitoringConfig {
@@ -654,29 +687,45 @@ model ApiKey {
   revokedAt      DateTime?
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiUsages      ApiUsage[]
 
   @@index([organizationId, revokedAt])
 }
 
 model WebhookEndpoint {
-  id             String       @id @default(uuid())
+  id             String            @id @default(uuid())
   organizationId String
   url            String
   secretHash     String
   events         String[]
-  enabled        Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled        Boolean           @default(true)
+  description    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries     WebhookDelivery[]
 
   @@index([organizationId, enabled])
 }
 
 model Testimonial {
-  id             String       @id @default(uuid())
-  organizationId String
-  quote          String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                String           @id @default(uuid())
+  organizationId    String
+  clientWorkspaceId String?
+  authorName        String           @default("Anonymous")
+  companyName       String?
+  role              String?
+  content           String           @default("")
+  rating            Int              @default(5)
+  status            String           @default("PENDING") // PENDING, APPROVED, REJECTED, ARCHIVED
+  publishedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @default(now()) @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace   ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([status, publishedAt])
 }
 
 model ClientWorkspace {
@@ -696,6 +745,7 @@ model ClientWorkspace {
   websites              Website[]
   members               ClientWorkspaceMember[]
   widgets               Widget[]
+  testimonials          Testimonial[]
   prospectCampaigns     ProspectCampaign[]
   competitorComparisons CompetitorComparison[]
 
@@ -863,3 +913,90 @@ model CompetitorComparison {
 
   @@index([organizationId, createdAt])
 }
+
+model ApiUsage {
+  id             String       @id @default(uuid())
+  organizationId String
+  apiKeyId       String?
+  endpoint       String
+  method         String
+  statusCode     Int
+  latencyMs      Int
+  ipAddress      String?
+  timestamp      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey         ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, timestamp])
+  @@index([apiKeyId, timestamp])
+}
+
+model WebhookDelivery {
+  id                String          @id @default(uuid())
+  webhookEndpointId String
+  organizationId    String
+  event             String
+  deliveryId        String          @unique
+  payload           Json
+  statusCode        Int?
+  responseBody      String?
+  attempts          Int             @default(1)
+  status            String          @default("SUCCESS") // SUCCESS, FAILED, RETRYING
+  errorMessage      String?
+  deliveredAt       DateTime?
+  createdAt         DateTime        @default(now())
+  webhookEndpoint   WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([webhookEndpointId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model OutboxEvent {
+  id             String       @id @default(uuid())
+  organizationId String
+  eventType      String
+  aggregateType  String
+  aggregateId    String
+  payload        Json
+  status         String       @default("PENDING") // PENDING, PROCESSING, PUBLISHED, FAILED
+  retryCount     Int          @default(0)
+  error          String?
+  createdAt      DateTime     @default(now())
+  processedAt    DateTime?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  action       String
+  resourceType String
+  resourceId   String?
+  details      Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([resourceType, createdAt])
+}
+
+model NotificationPreference {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  channel        String       @default("EMAIL") // EMAIL, IN_APP
+  eventTypes     String[]     @default(["AUDIT_COMPLETED", "MONITORING_ALERT", "BILLING_INVOICE"])
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId, channel])
+}
+

@@ -98,10 +98,10 @@ export class TemplateAIProvider implements AIProvider {
     } else {
       // Neutral mode: never claim issues that don't exist
       subject = `Diagnostic evaluation regarding ${context.domain}'s lead performance (Score: ${context.leadScore}/100)`;
-      opening = `Hi ${name} team,\n\nLeadGuard reviewed the available diagnostic baseline data for ${context.domain}.`;
-      problem = `Our baseline evaluation shows an overall conversion readiness score of ${context.leadScore}/100. No critical individual technical blocker was isolated, but optimization opportunities exist across standard lead capture channels.`;
-      businessImpact = `Sites scoring in this range typically benefit from proactive funnel hardening and continuous health monitoring.`;
-      recommendation = `Implementing continuous health monitoring will ensure future conversion leaks or tracking drop-offs are caught instantly.`;
+      opening = `Hi ${name} team,\n\nLeadGuard reviewed available diagnostic data for ${context.domain}.`;
+      problem = `LeadGuard reviewed available diagnostic data.`;
+      businessImpact = `Diagnostic conversion readiness score is ${context.leadScore}/100.`;
+      recommendation = `Continuous health and diagnostic monitoring is recommended.`;
       callToAction = `Would you like us to share our full diagnostic checklist for ${context.domain}?`;
     }
 
@@ -173,6 +173,9 @@ Respond with a JSON object strictly containing:
   "callToAction": "Clear low-friction CTA"
 }`;
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent?key=${this.apiKey}`,
@@ -183,14 +186,32 @@ Respond with a JSON object strictly containing:
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseMimeType: 'application/json' },
           }),
+          signal: controller.signal,
         }
       );
+
+      if (res.status === 429) {
+        const err = new Error('AI rate limit exceeded');
+        (err as unknown as { code: string }).code = 'AI_RATE_LIMITED';
+        throw err;
+      }
+
+      if (res.status >= 500) {
+        const err = new Error(`AI service temporary error (HTTP ${res.status})`);
+        (err as unknown as { code: string }).code = 'AI_SERVICE_UNAVAILABLE';
+        throw err;
+      }
 
       if (!res.ok) {
         throw new Error(`Gemini API returned status ${res.status}`);
       }
 
-      const body = (await res.json()) as any;
+      const bodyText = await res.text();
+      if (bodyText.length > 100000) {
+        throw new Error('AI response exceeded maximum payload limit');
+      }
+
+      const body = JSON.parse(bodyText);
       const rawText = body.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) {
         throw new Error('Empty response from Gemini provider');
@@ -221,12 +242,24 @@ Respond with a JSON object strictly containing:
         claimReferences: validated.claimReferences,
       };
     } catch (err: any) {
-      if (err.code === 'AI_PROVIDER_NOT_CONFIGURED' || err.code === 'INVALID_AI_RESPONSE') {
+      if (err.name === 'AbortError') {
+        const wrapped = new Error('AI request timed out after 15 seconds');
+        (wrapped as unknown as { code: string }).code = 'AI_TIMEOUT';
+        throw wrapped;
+      }
+      if (
+        err.code === 'AI_PROVIDER_NOT_CONFIGURED' ||
+        err.code === 'INVALID_AI_RESPONSE' ||
+        err.code === 'AI_RATE_LIMITED' ||
+        err.code === 'AI_SERVICE_UNAVAILABLE'
+      ) {
         throw err;
       }
       const wrapped = new Error(err.message || 'Failed to generate AI pitch');
       (wrapped as unknown as { code: string }).code = 'AI_GENERATION_FAILED';
       throw wrapped;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }
