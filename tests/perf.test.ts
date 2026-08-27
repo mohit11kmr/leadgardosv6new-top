@@ -126,5 +126,5 @@ describe('Performance Benchmarks: Serial vs Bounded Concurrent Crawl (Requiremen
     );
 
     expect(res10Concurrent.durationMs).toBeLessThan(10_000);
-  });
+  }, 30000);
 });

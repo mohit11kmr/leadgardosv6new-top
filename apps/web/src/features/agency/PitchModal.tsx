@@ -12,6 +12,7 @@ export function PitchModal({
   const [currentPitch, setCurrentPitch] = useState<Pitch | null>(null);
   const [tone, setTone] = useState<'PROFESSIONAL' | 'DIRECT' | 'CONSULTATIVE' | 'URGENT'>('PROFESSIONAL');
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState<string>('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -28,14 +29,46 @@ export function PitchModal({
 
   const handleGenerate = async () => {
     setLoading(true);
+    setStatusText('Queuing AI pitch generation job...');
     try {
-      const pitch = await agencyApi.generatePitch(prospect.id, { tone });
-      setCurrentPitch(pitch);
-      setPitches([pitch, ...pitches]);
-      setLoading(false);
+      const initRes = await agencyApi.generatePitch(prospect.id, { tone });
+      const generationId = initRes.generationId;
+
+      // Poll until completed or failed
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const statusRes = await agencyApi.getPitchGenerationStatus(prospect.id, generationId);
+          if (statusRes.status === 'COMPLETED' && statusRes.pitch) {
+            clearInterval(interval);
+            setCurrentPitch(statusRes.pitch);
+            setPitches([statusRes.pitch, ...pitches]);
+            setLoading(false);
+            setStatusText('');
+          } else if (statusRes.status === 'FAILED') {
+            clearInterval(interval);
+            setLoading(false);
+            setStatusText('');
+            alert(statusRes.error || 'AI generation failed');
+          } else {
+            setStatusText(`Generation status: ${statusRes.status}...`);
+          }
+        } catch {
+          // ignore polling network errors
+        }
+
+        if (attempts > 30) {
+          clearInterval(interval);
+          setLoading(false);
+          setStatusText('');
+          alert('Generation timed out. Please try again.');
+        }
+      }, 1000);
     } catch (err: any) {
-      alert(err.message || 'Failed to generate AI pitch');
+      alert(err.message || 'Failed to start AI pitch generation');
       setLoading(false);
+      setStatusText('');
     }
   };
 
@@ -86,7 +119,7 @@ export function PitchModal({
             onClick={handleGenerate}
             disabled={loading}
           >
-            {loading ? 'Generating...' : currentPitch ? '🔄 Regenerate Pitch' : '✨ Generate First Pitch'}
+            {loading ? statusText || 'Processing...' : currentPitch ? '🔄 Regenerate Pitch' : '✨ Generate First Pitch'}
           </button>
         </div>
 
@@ -128,7 +161,7 @@ export function PitchModal({
 
             <div className="flex justify-between items-center pt-2">
               <span className="text-xs text-slate-400">
-                Model: {currentPitch.model} • Prompt: {currentPitch.promptVersion}
+                Model: {currentPitch.model} • Provider: {currentPitch.provider} • Prompt: {currentPitch.promptVersion}
               </span>
               <div className="flex gap-2">
                 <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
@@ -142,7 +175,14 @@ export function PitchModal({
           </div>
         ) : (
           <div className="text-center py-12 text-slate-400">
-            Click "Generate First Pitch" to produce a tailored cold pitch grounded in real diagnostic data.
+            {loading ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                <span>{statusText || 'Generating grounded cold pitch...'}</span>
+              </div>
+            ) : (
+              'Click "Generate First Pitch" to produce a tailored cold pitch grounded in real diagnostic data.'
+            )}
           </div>
         )}
       </div>

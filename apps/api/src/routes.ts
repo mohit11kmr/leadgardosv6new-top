@@ -131,19 +131,49 @@ apiRouter.get('/billing/plans', async (_request, response, next) => {
   }
 });
 
-// --- Public Whitelisted Widget Endpoint (Unauthenticated, Origin-Restricted) ---
+// --- Public Whitelisted Widget Endpoint (Token-Authenticated, Origin-Restricted) ---
 apiRouter.get('/public/widgets/:widgetId', async (request: Request, response: Response, next: NextFunction) => {
   try {
+    const authHeader = request.headers.authorization;
+    const tokenHeader = request.headers['x-leadguard-widget-token'];
+    const rawToken = authHeader?.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : typeof tokenHeader === 'string'
+      ? tokenHeader.trim()
+      : undefined;
+
     const originHeader = request.headers.origin;
-    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    const refererHeader = request.headers.referer;
+    let origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    if (!origin && typeof refererHeader === 'string') {
+      try {
+        origin = new URL(refererHeader).origin;
+      } catch {
+        origin = undefined;
+      }
+    }
+
+    const clientIp = getClientIp(request);
     const widgetId = request.params.widgetId as string;
-    const data = await widgetService.getPublicWidgetData(widgetId, origin);
+    const data = await widgetService.getPublicWidgetData(widgetId, rawToken, origin, clientIp);
     response.json({ success: true, data });
   } catch (error: any) {
+    if (error.code === 'MISSING_WIDGET_TOKEN' || error.code === 'INVALID_WIDGET_TOKEN') {
+      return response.status(401).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
     if (error.code === 'ORIGIN_FORBIDDEN') {
       return response.status(403).json({
         success: false,
         error: { code: 'ORIGIN_FORBIDDEN', message: error.message },
+      });
+    }
+    if (error.code === 'WIDGET_RATE_LIMIT_EXCEEDED') {
+      return response.status(429).json({
+        success: false,
+        error: { code: 'WIDGET_RATE_LIMIT_EXCEEDED', message: error.message },
       });
     }
     response.status(404).json({
@@ -1585,7 +1615,7 @@ apiRouter.get('/agency/prospect-campaigns/:id/prospects', requirePermission('PRO
   }
 });
 
-// Grounded AI Cold Pitch Generator
+// Async Grounded AI Cold Pitch Generator
 apiRouter.post('/agency/prospects/:id/pitches', requirePermission('PITCH_GENERATE'), async (request: AuthRequest, response, next) => {
   try {
     const schema = z.object({
@@ -1593,13 +1623,43 @@ apiRouter.post('/agency/prospects/:id/pitches', requirePermission('PITCH_GENERAT
       language: z.string().optional(),
     });
     const options = schema.parse(request.body);
-    const pitch = await pitchService.generatePitch(request.auth!.organizationId, request.params.id, options);
-    response.status(201).json({ success: true, data: pitch });
+    const idempotencyKey = (request.headers['idempotency-key'] as string) || undefined;
+    const result = await pitchService.enqueuePitchGeneration(
+      request.auth!.organizationId,
+      request.params.id,
+      { ...options, idempotencyKey }
+    );
+    response.status(202).json({ success: true, data: result });
   } catch (error: any) {
     if (error.code === 'PLAN_LIMIT_REACHED') {
       return response.status(403).json({
         success: false,
         error: { code: 'PLAN_LIMIT_REACHED', message: error.message },
+      });
+    }
+    if (error.code === 'NOT_FOUND') {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: error.message },
+      });
+    }
+    next(error);
+  }
+});
+
+// Pitch Generation Status Polling
+apiRouter.get('/agency/prospects/:id/pitches/generations/:generationId', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const status = await pitchService.getGenerationStatus(
+      request.auth!.organizationId,
+      request.params.generationId
+    );
+    response.json({ success: true, data: status });
+  } catch (error: any) {
+    if (error.code === 'NOT_FOUND') {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: error.message },
       });
     }
     next(error);
@@ -1659,6 +1719,18 @@ apiRouter.get('/agency/widgets/:id', requirePermission('WIDGET_MANAGE'), async (
     }
     response.json({ success: true, data: widget });
   } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/agency/widgets/:id/regenerate-token', requirePermission('WIDGET_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const rotated = await widgetService.regenerateToken(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: rotated });
+  } catch (error: any) {
+    if (error.code === 'NOT_FOUND') {
+      return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: error.message } });
+    }
     next(error);
   }
 });

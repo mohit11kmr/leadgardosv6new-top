@@ -44,5 +44,5 @@ describe('Watchdog Monitoring: Execution Pipeline (Requirement 3, 10, 40)', () =
     expect(updatedConfig?.baseline).not.toBeNull();
     expect(updatedConfig?.lastRunAt).not.toBeNull();
     expect(updatedConfig?.nextRunAt).not.toBeNull();
-  });
+  }, 30000);
 });

@@ -65,7 +65,7 @@ describe('Agency Platform: Diagnostic Studio Widgets & Public Security (LG-028)'
     token = createAccessToken(user.id, agencyOrg.id);
   });
 
-  it('creates widget with hashed secret, validates origin, and returns only public diagnostic telemetry', async () => {
+  it('creates widget with hashed secret, validates origin and token, and supports token rotation', async () => {
     // 1. Create Widget
     const createRes = await request(app)
       .post('/api/v1/agency/widgets')
@@ -83,10 +83,27 @@ describe('Agency Platform: Diagnostic Studio Widgets & Public Security (LG-028)'
     expect(createRes.body.data.tokenHash).toBeUndefined(); // Hash never exposed to client
 
     const widgetId = createRes.body.data.id;
+    const widgetToken = createRes.body.data.rawToken;
 
-    // 2. Query public endpoint with valid Origin header
+    // 2. Query public endpoint without token -> 401 MISSING_WIDGET_TOKEN
+    const noTokenRes = await request(app)
+      .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Origin', 'https://myagency.com');
+    expect(noTokenRes.status).toBe(401);
+    expect(noTokenRes.body.error.code).toBe('MISSING_WIDGET_TOKEN');
+
+    // 3. Query public endpoint with invalid token -> 401 INVALID_WIDGET_TOKEN
+    const invalidTokenRes = await request(app)
+      .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Authorization', 'Bearer lgw_invalid_fake_token_123456')
+      .set('Origin', 'https://myagency.com');
+    expect(invalidTokenRes.status).toBe(401);
+    expect(invalidTokenRes.body.error.code).toBe('INVALID_WIDGET_TOKEN');
+
+    // 4. Query public endpoint with valid token + valid Origin -> 200 OK
     const validPublicRes = await request(app)
       .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Authorization', `Bearer ${widgetToken}`)
       .set('Origin', 'https://myagency.com');
 
     expect(validPublicRes.status).toBe(200);
@@ -98,12 +115,36 @@ describe('Agency Platform: Diagnostic Studio Widgets & Public Security (LG-028)'
     expect(validPublicRes.body.data.organizationId).toBeUndefined();
     expect(validPublicRes.body.data.apiKey).toBeUndefined();
 
-    // 3. Query public endpoint with unauthorized Origin header
-    const forbiddenPublicRes = await request(app)
+    // 5. Query public endpoint with unauthorized Origin header -> 403 ORIGIN_FORBIDDEN
+    const forbiddenOriginRes = await request(app)
       .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Authorization', `Bearer ${widgetToken}`)
       .set('Origin', 'https://attacker.com');
 
-    expect(forbiddenPublicRes.status).toBe(403);
-    expect(forbiddenPublicRes.body.error.code).toBe('ORIGIN_FORBIDDEN');
+    expect(forbiddenOriginRes.status).toBe(403);
+    expect(forbiddenOriginRes.body.error.code).toBe('ORIGIN_FORBIDDEN');
+
+    // 6. Rotate Widget Token
+    const rotateRes = await request(app)
+      .post(`/api/v1/agency/widgets/${widgetId}/regenerate-token`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(rotateRes.status).toBe(200);
+    const newWidgetToken = rotateRes.body.data.rawToken;
+    expect(newWidgetToken).not.toBe(widgetToken);
+
+    // Old token must immediately fail
+    const oldTokenCheck = await request(app)
+      .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Authorization', `Bearer ${widgetToken}`)
+      .set('Origin', 'https://myagency.com');
+    expect(oldTokenCheck.status).toBe(401);
+
+    // New token succeeds
+    const newTokenCheck = await request(app)
+      .get(`/api/v1/public/widgets/${widgetId}`)
+      .set('Authorization', `Bearer ${newWidgetToken}`)
+      .set('Origin', 'https://myagency.com');
+    expect(newTokenCheck.status).toBe(200);
   });
 });

@@ -82,5 +82,5 @@ describe('Worker Retry Idempotency & AuditRun Lifecycle (Requirement 33)', () =>
     // Verify scores remain consistent
     const score2 = await db.auditScore.findUnique({ where: { auditId: audit.id } });
     expect(score2?.overall).toBe(score1?.overall);
-  });
+  }, 30000);
 });

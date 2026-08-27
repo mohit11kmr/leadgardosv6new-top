@@ -16,12 +16,12 @@ describe('Agency Platform: 500-Site Prospect Hunter (LG-022)', () => {
   let token: string;
 
   beforeEach(async () => {
-    const email = `prospect.tester.${Date.now()}@leadguard.test`;
+    const email = `prospect.tester.${Date.now()}.${Math.random()}@leadguard.test`;
     user = await db.user.create({
       data: { email, passwordHash: await hashPassword('Password123456!') },
     });
     agencyOrg = await db.organization.create({
-      data: { name: 'Growth Agency', slug: `growth-agency-${Date.now()}` },
+      data: { name: 'Growth Agency', slug: `growth-agency-${Date.now()}-${Math.random()}` },
     });
     await db.organizationMember.create({
       data: { organizationId: agencyOrg.id, userId: user.id, role: 'OWNER' },
@@ -59,68 +59,80 @@ describe('Agency Platform: 500-Site Prospect Hunter (LG-022)', () => {
         planId: agencyPlan.id,
         status: 'ACTIVE',
         provider: 'RAZORPAY',
-        providerSubscriptionId: `sub_growth_${Date.now()}`,
+        providerSubscriptionId: `sub_growth_${Date.now()}_${Math.random()}`,
       },
     });
 
     token = createAccessToken(user.id, agencyOrg.id);
   });
 
-  it('strictly rejects SSRF targets and private IP addresses', () => {
-    expect(validateSafeUrl('http://localhost:3000').isValid).toBe(false);
-    expect(validateSafeUrl('http://127.0.0.1/admin').isValid).toBe(false);
-    expect(validateSafeUrl('http://169.254.169.254/latest/meta-data').isValid).toBe(false);
-    expect(validateSafeUrl('http://10.0.0.5/internal').isValid).toBe(false);
-    expect(validateSafeUrl('http://192.168.1.1/router').isValid).toBe(false);
-    expect(validateSafeUrl('http://172.20.0.1/db').isValid).toBe(false);
+  it('strictly rejects SSRF targets and private IP addresses', async () => {
+    const oldEnv = process.env.ALLOW_LOCAL_FIXTURES;
+    delete process.env.ALLOW_LOCAL_FIXTURES;
+    try {
+      expect((await validateSafeUrl('http://localhost:3000')).isValid).toBe(false);
+      expect((await validateSafeUrl('http://127.0.0.1/admin')).isValid).toBe(false);
+      expect((await validateSafeUrl('http://169.254.169.254/latest/meta-data')).isValid).toBe(false);
+      expect((await validateSafeUrl('http://10.0.0.5/internal')).isValid).toBe(false);
+      expect((await validateSafeUrl('http://192.168.1.1/router')).isValid).toBe(false);
+      expect((await validateSafeUrl('http://172.20.0.1/db')).isValid).toBe(false);
 
-    const valid = validateSafeUrl('https://exampleclinic.com');
-    expect(valid.isValid).toBe(true);
-    expect(valid.domain).toBe('exampleclinic.com');
+      const valid = await validateSafeUrl('https://exampleclinic.com');
+      expect(valid.isValid).toBe(true);
+      expect(valid.domain).toBe('exampleclinic.com');
+    } finally {
+      if (oldEnv) process.env.ALLOW_LOCAL_FIXTURES = oldEnv;
+    }
   });
 
   it('parses CSV prospect lists and creates campaign with validated URLs', async () => {
-    const csvData = `url,businessName,industry,location
+    const oldEnv = process.env.ALLOW_LOCAL_FIXTURES;
+    delete process.env.ALLOW_LOCAL_FIXTURES;
+    try {
+      const csvData = `url,businessName,industry,location
 https://austindental.com,Austin Dental,Healthcare,Austin TX
 https://bostondental.com,Boston Dental,Healthcare,Boston MA
 http://localhost:8080,Malicious SSRF,Tech,Local
 https://seattledental.com,Seattle Dental,Healthcare,Seattle WA`;
 
-    const source = new CsvProspectSource(csvData);
-    const extracted = await source.extract();
-    expect(extracted.length).toBe(4);
+      const source = new CsvProspectSource(csvData);
+      const extracted = await source.extract();
+      expect(extracted.length).toBe(4);
 
-    const createRes = await request(app)
-      .post('/api/v1/agency/prospect-campaigns')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'Dental Batch #1',
-        sourceType: 'CSV',
-        csvContent: csvData,
-      });
+      const createRes = await request(app)
+        .post('/api/v1/agency/prospect-campaigns')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Dental Batch #1',
+          sourceType: 'CSV',
+          csvContent: csvData,
+        });
 
-    expect(createRes.status).toBe(201);
-    expect(createRes.body.success).toBe(true);
-    // 3 valid sites ingested (localhost SSRF rejected)
-    expect(createRes.body.data.targetCount).toBe(3);
+      expect(createRes.status).toBe(201);
+      expect(createRes.body.success).toBe(true);
+      // 3 valid sites ingested (localhost SSRF rejected)
+      expect(createRes.body.data.targetCount).toBe(3);
 
-    const campaignId = createRes.body.data.id;
+      const campaignId = createRes.body.data.id;
 
-    // Start campaign
-    const startRes = await request(app)
-      .post(`/api/v1/agency/prospect-campaigns/${campaignId}/start`)
-      .set('Authorization', `Bearer ${token}`);
+      // Start campaign
+      const startRes = await request(app)
+        .post(`/api/v1/agency/prospect-campaigns/${campaignId}/start`)
+        .set('Authorization', `Bearer ${token}`);
 
-    expect(startRes.status).toBe(202);
-    expect(startRes.body.data.enqueued).toBe(true);
+      expect(startRes.status).toBe(202);
+      expect(startRes.body.data.enqueued).toBe(true);
 
-    // Query prospects with pagination
-    const prospectsRes = await request(app)
-      .get(`/api/v1/agency/prospect-campaigns/${campaignId}/prospects`)
-      .set('Authorization', `Bearer ${token}`);
+      // Query prospects with pagination
+      const prospectsRes = await request(app)
+        .get(`/api/v1/agency/prospect-campaigns/${campaignId}/prospects`)
+        .set('Authorization', `Bearer ${token}`);
 
-    expect(prospectsRes.status).toBe(200);
-    expect(prospectsRes.body.data.items.length).toBe(3);
-    expect(prospectsRes.body.data.items[0].domain).toBeDefined();
+      expect(prospectsRes.status).toBe(200);
+      expect(prospectsRes.body.data.items.length).toBe(3);
+      expect(prospectsRes.body.data.items[0].domain).toBeDefined();
+    } finally {
+      if (oldEnv) process.env.ALLOW_LOCAL_FIXTURES = oldEnv;
+    }
   });
 });

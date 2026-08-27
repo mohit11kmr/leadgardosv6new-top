@@ -2,10 +2,14 @@ import { db } from '@leadguard/database';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
+import { validateExternalUrl, normalizeUrl } from '@leadguard/shared';
 import { entitlementService } from '../entitlementService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 export const prospectQueue = new Queue('agency-prospect', { connection });
+
+export const MAX_PROSPECT_IMPORT_ROWS = 500;
+export const MAX_PROSPECT_IMPORT_BYTES = 10 * 1024 * 1024; // 10MB
 
 export interface ProspectInputItem {
   url: string;
@@ -21,35 +25,129 @@ export interface ProspectSource {
 export class ManualProspectSource implements ProspectSource {
   constructor(private items: ProspectInputItem[]) {}
   async extract(): Promise<ProspectInputItem[]> {
+    if (this.items.length > MAX_PROSPECT_IMPORT_ROWS) {
+      const err = new Error(`Manual import exceeds maximum allowed limit of ${MAX_PROSPECT_IMPORT_ROWS} prospects`);
+      (err as unknown as { code: string }).code = 'IMPORT_ROW_LIMIT_EXCEEDED';
+      throw err;
+    }
     return this.items;
   }
 }
 
+export function parseRfc4180Csv(csvText: string): string[][] {
+  const cleanText = csvText.replace(/^\uFEFF/, '');
+  if (Buffer.byteLength(cleanText, 'utf8') > MAX_PROSPECT_IMPORT_BYTES) {
+    const err = new Error('CSV file exceeds maximum allowed size of 10MB');
+    (err as unknown as { code: string }).code = 'IMPORT_BYTE_LIMIT_EXCEEDED';
+    throw err;
+  }
+
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+  let i = 0;
+
+  while (i < cleanText.length) {
+    const char = cleanText[i];
+
+    if (insideQuotes) {
+      if (char === '"') {
+        if (i + 1 < cleanText.length && cleanText[i + 1] === '"') {
+          currentField += '"';
+          i += 2;
+          continue;
+        } else {
+          insideQuotes = false;
+          i += 1;
+          continue;
+        }
+      } else {
+        currentField += char;
+        i += 1;
+        continue;
+      }
+    } else {
+      if (char === '"') {
+        insideQuotes = true;
+        i += 1;
+        continue;
+      } else if (char === ',') {
+        currentRow.push(currentField.trim());
+        currentField = '';
+        i += 1;
+        continue;
+      } else if (char === '\r') {
+        if (i + 1 < cleanText.length && cleanText[i + 1] === '\n') {
+          i += 1;
+        }
+        currentRow.push(currentField.trim());
+        if (currentRow.some((f) => f.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = '';
+        i += 1;
+        continue;
+      } else if (char === '\n') {
+        currentRow.push(currentField.trim());
+        if (currentRow.some((f) => f.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = '';
+        i += 1;
+        continue;
+      } else {
+        currentField += char;
+        i += 1;
+        continue;
+      }
+    }
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((f) => f.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
 export class CsvProspectSource implements ProspectSource {
   constructor(private csvContent: string) {}
-  async extract(): Promise<ProspectInputItem[]> {
-    const lines = this.csvContent.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length === 0) return [];
 
-    const headers = lines[0]!.toLowerCase().split(',').map((h) => h.trim().replace(/^["']|["']$/g, ''));
-    const urlIdx = headers.findIndex((h) => h === 'url' || h === 'website' || h === 'domain');
-    const nameIdx = headers.findIndex((h) => h === 'name' || h === 'businessname' || h === 'company');
-    const indIdx = headers.findIndex((h) => h === 'industry' || h === 'category');
-    const locIdx = headers.findIndex((h) => h === 'location' || h === 'city' || h === 'country');
+  async extract(): Promise<ProspectInputItem[]> {
+    const rows = parseRfc4180Csv(this.csvContent);
+    if (rows.length === 0) return [];
+
+    const headers = rows[0]!.map((h) => h.toLowerCase());
+    const urlIdx = headers.findIndex((h) => h === 'url' || h === 'website' || h === 'domain' || h === 'link');
+    const nameIdx = headers.findIndex((h) => h === 'name' || h === 'businessname' || h === 'company' || h === 'business');
+    const indIdx = headers.findIndex((h) => h === 'industry' || h === 'category' || h === 'niche');
+    const locIdx = headers.findIndex((h) => h === 'location' || h === 'city' || h === 'address' || h === 'country');
 
     const effectiveUrlIdx = urlIdx >= 0 ? urlIdx : 0;
-    const items: ProspectInputItem[] = [];
+    const dataRows = rows.slice(1);
 
-    for (let i = 1; i < lines.length; i++) {
-      const parts = lines[i]!.split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
-      const rawUrl = parts[effectiveUrlIdx];
+    if (dataRows.length > MAX_PROSPECT_IMPORT_ROWS) {
+      const err = new Error(`CSV contains ${dataRows.length} rows which exceeds the maximum limit of ${MAX_PROSPECT_IMPORT_ROWS}`);
+      (err as unknown as { code: string }).code = 'IMPORT_ROW_LIMIT_EXCEEDED';
+      throw err;
+    }
+
+    const items: ProspectInputItem[] = [];
+    for (const row of dataRows) {
+      const rawUrl = row[effectiveUrlIdx]?.trim();
       if (!rawUrl) continue;
 
       items.push({
         url: rawUrl,
-        businessName: nameIdx >= 0 ? parts[nameIdx] : undefined,
-        industry: indIdx >= 0 ? parts[indIdx] : undefined,
-        location: locIdx >= 0 ? parts[locIdx] : undefined,
+        businessName: (nameIdx >= 0 && row[nameIdx]?.trim()) || undefined,
+        industry: (indIdx >= 0 && row[indIdx]?.trim()) || undefined,
+        location: (locIdx >= 0 && row[locIdx]?.trim()) || undefined,
       });
     }
 
@@ -57,42 +155,36 @@ export class CsvProspectSource implements ProspectSource {
   }
 }
 
-export function validateSafeUrl(rawUrl: string): { isValid: boolean; normalizedUrl?: string; domain?: string; error?: string } {
+export async function validateSafeProspectUrl(rawUrl: string): Promise<{
+  isValid: boolean;
+  normalizedUrl?: string;
+  domain?: string;
+  error?: string;
+}> {
   try {
     let toParse = rawUrl.trim();
     if (!/^https?:\/\//i.test(toParse)) {
       toParse = `https://${toParse}`;
     }
 
-    const parsed = new URL(toParse);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return { isValid: false, error: 'Only HTTP and HTTPS protocols are allowed' };
-    }
+    const validatedUrl = await validateExternalUrl(toParse);
+    const normalized = normalizeUrl(validatedUrl.toString());
+    const domain = validatedUrl.hostname.toLowerCase();
 
-    const host = parsed.hostname.toLowerCase();
-
-    // SSRF Protections
-    if (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '0.0.0.0' ||
-      host === '::1' ||
-      host === '169.254.169.254' ||
-      host.endsWith('.internal') ||
-      host.endsWith('.local') ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
-    ) {
-      return { isValid: false, error: 'Access to local/private network addresses is blocked' };
-    }
-
-    const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname === '/' ? '/' : parsed.pathname}`;
-    return { isValid: true, normalizedUrl, domain: host };
-  } catch (err) {
-    return { isValid: false, error: 'Malformed URL format' };
+    return {
+      isValid: true,
+      normalizedUrl: normalized,
+      domain,
+    };
+  } catch (err: any) {
+    return {
+      isValid: false,
+      error: err.message || 'Invalid or prohibited URL',
+    };
   }
 }
+
+export { validateSafeProspectUrl as validateSafeUrl };
 
 export class ProspectService {
   async createCampaign(
@@ -118,7 +210,7 @@ export class ProspectService {
       throw new Error('No candidate URLs provided in campaign');
     }
 
-    // 2. Entitlement limit check (max 500 prospects per campaign on Agency tier)
+    // 2. Entitlement limit check
     const entitlement = await entitlementService.canCreateProspectCampaign(organizationId, rawItems.length);
     if (!entitlement.allowed) {
       const err = new Error(entitlement.reason);
@@ -126,7 +218,7 @@ export class ProspectService {
       throw err;
     }
 
-    // 3. Create Campaign record
+    // 3. Create Campaign record in DRAFT
     const campaign = await db.prospectCampaign.create({
       data: {
         organizationId,
@@ -138,13 +230,20 @@ export class ProspectService {
       },
     });
 
-    // 4. Validate and ingest prospects
+    // 4. Validate candidates and deduplicate within campaign
+    const seenUrls = new Set<string>();
     const validProspects = [];
+
     for (const item of rawItems) {
-      const val = validateSafeUrl(item.url);
+      const val = await validateSafeProspectUrl(item.url);
       if (!val.isValid || !val.normalizedUrl || !val.domain) {
         continue;
       }
+
+      if (seenUrls.has(val.normalizedUrl)) {
+        continue; // Deduplicate duplicate candidate in same campaign
+      }
+      seenUrls.add(val.normalizedUrl);
 
       validProspects.push({
         campaignId: campaign.id,
@@ -163,6 +262,7 @@ export class ProspectService {
     if (validProspects.length > 0) {
       await db.prospect.createMany({
         data: validProspects,
+        skipDuplicates: true,
       });
     }
 

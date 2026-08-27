@@ -241,10 +241,19 @@ export const agencyApi = {
     prospectId: string,
     options?: { tone?: 'PROFESSIONAL' | 'DIRECT' | 'CONSULTATIVE' | 'URGENT'; language?: string }
   ) => {
-    return apiClient<Pitch>(`/agency/prospects/${prospectId}/pitches`, {
+    return apiClient<{ generationId: string; status: string }>(`/agency/prospects/${prospectId}/pitches`, {
       method: 'POST',
       body: JSON.stringify(options || {}),
     });
+  },
+
+  getPitchGenerationStatus: async (prospectId: string, generationId: string) => {
+    return apiClient<{
+      generationId: string;
+      status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+      error?: string | null;
+      pitch?: Pitch | null;
+    }>(`/agency/prospects/${prospectId}/pitches/generations/${generationId}`);
   },
 
   getPitches: async (prospectId: string) => {
@@ -265,6 +274,12 @@ export const agencyApi = {
     return apiClient<Widget>('/agency/widgets', {
       method: 'POST',
       body: JSON.stringify(input),
+    });
+  },
+
+  regenerateWidgetToken: async (id: string) => {
+    return apiClient<{ id: string; rawToken: string }>(`/agency/widgets/${id}/regenerate-token`, {
+      method: 'POST',
     });
   },
 

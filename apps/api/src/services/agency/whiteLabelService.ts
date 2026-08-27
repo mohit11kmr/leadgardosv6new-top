@@ -11,6 +11,25 @@ export interface BrandingConfig {
   footer?: string;
 }
 
+function escapeHtml(str?: string | null): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function sanitizeHexColor(color?: string | null, fallback = '#6366f1'): string {
+  if (!color) return fallback;
+  const clean = color.trim();
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(clean)) {
+    return clean;
+  }
+  return fallback;
+}
+
 export class WhiteLabelService {
   async resolveBranding(
     organizationId: string,
@@ -32,8 +51,8 @@ export class WhiteLabelService {
 
     // 1. Check Client Workspace branding
     if (clientWorkspaceId) {
-      const client = await db.clientWorkspace.findUnique({
-        where: { id: clientWorkspaceId },
+      const client = await db.clientWorkspace.findFirst({
+        where: { id: clientWorkspaceId, organizationId },
       });
       if (client?.branding && typeof client.branding === 'object') {
         const cb = client.branding as BrandingConfig;
@@ -42,8 +61,8 @@ export class WhiteLabelService {
           logoUrl: cb.logoUrl,
           website: cb.website,
           supportEmail: cb.supportEmail,
-          primaryColor: cb.primaryColor || '#6366f1',
-          secondaryColor: cb.secondaryColor || '#10b981',
+          primaryColor: sanitizeHexColor(cb.primaryColor, '#6366f1'),
+          secondaryColor: sanitizeHexColor(cb.secondaryColor, '#10b981'),
           footer: cb.footer || `Prepared for ${client.name}`,
         };
       }
@@ -72,13 +91,21 @@ export class WhiteLabelService {
     branding: BrandingConfig;
   }): string {
     const { branding } = reportData;
-    const primaryColor = branding.primaryColor || '#6366f1';
+    const primaryColor = sanitizeHexColor(branding.primaryColor, '#6366f1');
+
+    const safeTitle = escapeHtml(reportData.title);
+    const safeCompanyName = escapeHtml(branding.companyName || 'Diagnostic Report');
+    const safeWebsite = escapeHtml(branding.website || '');
+    const safeWebsiteUrl = escapeHtml(reportData.websiteUrl);
+    const safeAuditDate = escapeHtml(reportData.auditDate);
+    const safeFooter = escapeHtml(branding.footer || 'Confidential Client Diagnostic Report');
+    const safeEmail = escapeHtml(branding.supportEmail || '');
 
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${reportData.title} — ${branding.companyName || 'Diagnostic Report'}</title>
+  <title>${safeTitle} — ${safeCompanyName}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 40px; color: #1e293b; background: #fff; }
     .header { border-bottom: 2px solid ${primaryColor}; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
@@ -94,30 +121,30 @@ export class WhiteLabelService {
 <body>
   <div class="header">
     <div>
-      <h1 class="title">${reportData.title}</h1>
-      <div class="agencyName">${branding.companyName || 'LeadGuard Agency Report'}</div>
+      <h1 class="title">${safeTitle}</h1>
+      <div class="agencyName">${safeCompanyName}</div>
     </div>
-    <div>${branding.website || ''}</div>
+    <div>${safeWebsite}</div>
   </div>
 
   <div class="scoreCard">
     <div>Overall Lead Health Score</div>
-    <div class="scoreValue">${reportData.overallScore}/100</div>
-    <div>Website: ${reportData.websiteUrl} | Date: ${reportData.auditDate}</div>
+    <div class="scoreValue">${Number(reportData.overallScore)}/100</div>
+    <div>Website: ${safeWebsiteUrl} | Date: ${safeAuditDate}</div>
   </div>
 
   <div class="statsGrid">
     <div class="statBox">
-      <strong>Total Findings:</strong> ${reportData.findingsCount}
+      <strong>Total Findings:</strong> ${Number(reportData.findingsCount)}
     </div>
     <div class="statBox">
-      <strong>Critical Flaws:</strong> ${reportData.criticalFindings}
+      <strong>Critical Flaws:</strong> ${Number(reportData.criticalFindings)}
     </div>
   </div>
 
   <div class="footer">
-    ${branding.footer || 'Confidential Client Diagnostic Report'}
-    ${branding.supportEmail ? ` | Contact: ${branding.supportEmail}` : ''}
+    ${safeFooter}
+    ${safeEmail ? ` | Contact: ${safeEmail}` : ''}
   </div>
 </body>
 </html>`;

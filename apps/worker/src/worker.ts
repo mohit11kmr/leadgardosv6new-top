@@ -6,6 +6,7 @@ import { processAudit } from './audit.js';
 import { processMonitoringJob, type MonitoringJobData } from './monitoring/index.js';
 import { prospectWorker } from './agency/prospectWorker.js';
 import { competitorWorker } from './agency/competitorWorker.js';
+import { pitchWorker } from './agency/pitchWorker.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -18,6 +19,7 @@ export const queueNames = [
   'prospect',
   'agency-prospect',
   'agency-competitor',
+  'agency-pitch',
   'email',
   'webhook',
   'billing-webhook',

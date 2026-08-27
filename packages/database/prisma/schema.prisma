@@ -224,6 +224,7 @@ model Organization {
   pitches               Pitch[]
   widgets               Widget[]
   competitorComparisons CompetitorComparison[]
+  pitchGenerations      PitchGeneration[]
 }
 
 model OrganizationMember {
@@ -720,9 +721,12 @@ model ProspectCampaign {
   clientWorkspaceId String?
   name              String
   source            String           @default("MANUAL") // CSV, MANUAL, SEARCH
-  status            String           @default("DRAFT")  // DRAFT, QUEUED, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED
+  status            String           @default("DRAFT")  // DRAFT, QUEUED, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED, PARTIAL
   targetCount       Int              @default(0)
   processedCount    Int              @default(0)
+  successfulCount   Int              @default(0)
+  failedCount       Int              @default(0)
+  skippedCount      Int              @default(0)
   qualifiedCount    Int              @default(0)
   errorMessage      String?
   startedAt         DateTime?
@@ -738,7 +742,7 @@ model ProspectCampaign {
 }
 
 model Prospect {
-  id                   String           @id @default(uuid())
+  id                   String            @id @default(uuid())
   campaignId           String
   organizationId       String
   url                  String
@@ -747,50 +751,76 @@ model Prospect {
   businessName         String?
   industry             String?
   location             String?
-  status               String           @default("DISCOVERED") // DISCOVERED, VALIDATED, AUDITED, QUALIFIED, CONTACTED, CONVERTED, DISMISSED
+  status               String            @default("DISCOVERED") // DISCOVERED, VALIDATED, AUDITED, QUALIFIED, CONTACTED, CONVERTED, DISMISSED
   leadScore            Int?
-  criticalFindings     Int              @default(0)
-  highFindings         Int              @default(0)
+  criticalFindings     Int               @default(0)
+  highFindings         Int               @default(0)
   potentialOpportunity String?
   auditId              String?
-  audit                Audit?           @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  audit                Audit?            @relation(fields: [auditId], references: [id], onDelete: SetNull)
   lastCheckedAt        DateTime?
-  source               String           @default("MANUAL")
+  source               String            @default("MANUAL")
   notes                String?
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
-  campaign             ProspectCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  organization         Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  campaign             ProspectCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  organization         Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   pitches              Pitch[]
+  pitchGenerations     PitchGeneration[]
 
+  @@unique([campaignId, normalizedUrl])
   @@index([campaignId, status])
   @@index([organizationId, domain])
 }
 
 model Pitch {
-  id             String       @id @default(uuid())
-  prospectId     String
-  organizationId String
-  provider       String       @default("GEMINI")
-  model          String       @default("gemini-2.5-pro")
-  promptVersion  String       @default("v1")
-  language       String       @default("en")
-  tone           String       @default("PROFESSIONAL") // PROFESSIONAL, DIRECT, CONSULTATIVE, URGENT
-  subject        String
-  opening        String
-  problem        String
-  businessImpact String
-  recommendation String
-  callToAction   String
-  content        String
-  tokensUsed     Int?
-  estimatedCost  Float?
-  createdAt      DateTime     @default(now())
-  prospect       Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id              String       @id @default(uuid())
+  prospectId      String
+  organizationId  String
+  version         Int          @default(1)
+  generationType  String       @default("DETERMINISTIC_TEMPLATE") // DETERMINISTIC_TEMPLATE, REAL_AI
+  provider        String       @default("DETERMINISTIC_TEMPLATE")
+  model           String       @default("template-v1")
+  promptVersion   String       @default("v1")
+  language        String       @default("en")
+  tone            String       @default("PROFESSIONAL") // PROFESSIONAL, DIRECT, CONSULTATIVE, URGENT
+  subject         String
+  opening         String
+  problem         String
+  businessImpact  String
+  recommendation  String
+  callToAction    String
+  content         String
+  claimReferences Json?
+  idempotencyKey  String?
+  tokensUsed      Int?
+  estimatedCost   Float?
+  createdAt       DateTime     @default(now())
+  prospect        Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([prospectId, createdAt])
   @@index([organizationId, createdAt])
+}
+
+model PitchGeneration {
+  id             String       @id @default(uuid())
+  organizationId String
+  prospectId     String
+  status         String       @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED
+  idempotencyKey String?
+  pitchId        String?
+  error          String?
+  tokensUsed     Int?
+  estimatedCost  Float?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prospect       Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status])
+  @@index([prospectId, createdAt])
 }
 
 model Widget {

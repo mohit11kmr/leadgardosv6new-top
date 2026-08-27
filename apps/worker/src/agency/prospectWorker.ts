@@ -25,6 +25,9 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
   });
 
   let processedCount = 0;
+  let successfulCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
   let qualifiedCount = 0;
 
   const crawler = new BoundedCrawler({
@@ -38,6 +41,20 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
   const abortController = new AbortController();
 
   for (const prospect of campaign.prospects) {
+    // Check if campaign was paused or cancelled mid-execution
+    const liveCampaign = await db.prospectCampaign.findUnique({
+      where: { id: campaignId },
+      select: { status: true },
+    });
+
+    if (liveCampaign?.status === 'CANCELLED') {
+      return { status: 'CANCELLED', processedCount, successfulCount, failedCount, skippedCount };
+    }
+
+    if (liveCampaign?.status === 'PAUSED') {
+      return { status: 'PAUSED', processedCount, successfulCount, failedCount, skippedCount };
+    }
+
     try {
       const crawlResult = await crawler.crawl(prospect.normalizedUrl, abortController.signal);
       const rootPage = crawlResult.pages.get(prospect.normalizedUrl) || Array.from(crawlResult.pages.values())[0];
@@ -63,40 +80,59 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
           },
         });
 
+        successfulCount++;
         if (isQualified) qualifiedCount++;
       } else {
+        // Root page could not be fetched or HTML unavailable
         await db.prospect.update({
           where: { id: prospect.id },
           data: {
-            leadScore: 40,
-            criticalFindings: 1,
+            leadScore: 50,
             status: 'AUDITED',
             lastCheckedAt: new Date(),
           },
         });
+        skippedCount++;
       }
     } catch (err) {
       console.warn(`[ProspectWorker] Failed to audit prospect ${prospect.url}:`, err);
+      failedCount++;
     }
 
     processedCount++;
     await db.prospectCampaign.update({
       where: { id: campaignId },
-      data: { processedCount, qualifiedCount },
+      data: {
+        processedCount,
+        successfulCount,
+        failedCount,
+        skippedCount,
+        qualifiedCount,
+      },
     });
+  }
+
+  let finalStatus = 'COMPLETED';
+  if (failedCount > 0 && successfulCount === 0) {
+    finalStatus = 'FAILED';
+  } else if (failedCount > 0) {
+    finalStatus = 'PARTIAL';
   }
 
   await db.prospectCampaign.update({
     where: { id: campaignId },
     data: {
-      status: 'COMPLETED',
+      status: finalStatus,
       completedAt: new Date(),
       processedCount,
+      successfulCount,
+      failedCount,
+      skippedCount,
       qualifiedCount,
     },
   });
 
-  return { status: 'COMPLETED', processedCount, qualifiedCount };
+  return { status: finalStatus, processedCount, successfulCount, failedCount, skippedCount, qualifiedCount };
 }
 
 export const prospectWorker = new Worker(

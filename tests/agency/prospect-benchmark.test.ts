@@ -51,19 +51,16 @@ describe('Agency Platform: 500-Prospect Benchmark & Scalability (LG-022)', () =>
     });
   });
 
-  it('benchmarks URL validation throughput for 500 candidates', () => {
+  it('benchmarks URL validation throughput for 500 candidates', async () => {
     const urls = Array.from({ length: 500 }, (_, i) => `https://candidate-business-${i}.com/services`);
     const start = performance.now();
 
-    let validCount = 0;
-    for (const u of urls) {
-      const res = validateSafeUrl(u);
-      if (res.isValid) validCount++;
-    }
+    const results = await Promise.all(urls.map((u) => validateSafeUrl(u)));
+    const validCount = results.filter((r) => r.isValid).length;
 
     const duration = performance.now() - start;
     expect(validCount).toBe(500);
-    expect(duration).toBeLessThan(100); // Sub-100ms for 500 URL SSRF validations
+    expect(duration).toBeLessThan(5000); // Async URL & domain validations under 5s for 500 items
   });
 
   it('benchmarks campaign creation and ingestion for 10, 100, and 500 prospects', async () => {

@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { entitlementService } from '../entitlementService.js';
-import { validateSafeUrl } from './prospectService.js';
+import { validateSafeProspectUrl } from './prospectService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 export const competitorQueue = new Queue('agency-competitor', { connection });
@@ -25,14 +25,14 @@ export class CompetitorService {
       throw err;
     }
 
-    const targetVal = validateSafeUrl(input.targetUrl);
+    const targetVal = await validateSafeProspectUrl(input.targetUrl);
     if (!targetVal.isValid || !targetVal.normalizedUrl) {
       throw new Error(`Invalid target URL: ${targetVal.error}`);
     }
 
     const validCompetitorUrls: string[] = [];
     for (const compUrl of input.competitorUrls) {
-      const compVal = validateSafeUrl(compUrl);
+      const compVal = await validateSafeProspectUrl(compUrl);
       if (compVal.isValid && compVal.normalizedUrl) {
         validCompetitorUrls.push(compVal.normalizedUrl);
       }
