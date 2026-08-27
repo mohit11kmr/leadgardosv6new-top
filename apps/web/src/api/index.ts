@@ -5,3 +5,4 @@ export * from './websites.js';
 export * from './audits.js';
 export * from './intelligence.js';
 export * from './billing.js';
+export * from './monitoring.js';

@@ -23,6 +23,7 @@ import { apiKeyService } from './services/apiKeyService.js';
 import { authSecurityService } from './services/authSecurityService.js';
 import { billingService } from './services/billingService.js';
 import { entitlementService } from './services/entitlementService.js';
+import { monitoringService } from './services/monitoringService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
 import { requirePermission } from './middleware/rbac.js';
 import {
@@ -607,6 +608,127 @@ apiRouter.get('/billing/invoices', requirePermission('BILLING_VIEW'), async (req
       take: 50,
     });
     response.json({ success: true, data: invoices });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Watchdog Continuous Monitoring Routes (RBAC: MONITORING_VIEW / MONITORING_MANAGE / MONITOR_RUN) ---
+apiRouter.post('/monitoring', requirePermission('MONITORING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = z
+      .object({
+        websiteId: z.string().uuid(),
+        frequency: z.enum(['FIVE_MINUTES', 'FIFTEEN_MINUTES', 'HOURLY', 'DAILY']).optional(),
+        healthChecks: z.record(z.unknown()).optional(),
+        alertPolicy: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body);
+
+    const monitor = await monitoringService.createMonitor(request.auth!.organizationId, input);
+    response.status(201).json({ success: true, data: monitor });
+  } catch (error) {
+    if (error instanceof Error && (error as { code?: string }).code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message, requestId: requestId(request) },
+      });
+    }
+    next(error);
+  }
+});
+
+apiRouter.get('/monitoring', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const monitors = await monitoringService.listMonitors(request.auth!.organizationId);
+    response.json({ success: true, data: monitors });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/monitoring/:id', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const monitor = await monitoringService.getMonitor(request.auth!.organizationId, request.params.id);
+    if (!monitor) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Monitor not found', requestId: requestId(request) },
+      });
+    }
+    response.json({ success: true, data: monitor });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/monitoring/:id', requirePermission('MONITORING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = z
+      .object({
+        enabled: z.boolean().optional(),
+        frequency: z.enum(['FIVE_MINUTES', 'FIFTEEN_MINUTES', 'HOURLY', 'DAILY']).optional(),
+        healthChecks: z.record(z.unknown()).optional(),
+        alertPolicy: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body);
+
+    const updated = await monitoringService.updateMonitor(request.auth!.organizationId, request.params.id, input);
+    response.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/monitoring/:id', requirePermission('MONITORING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    await monitoringService.deleteMonitor(request.auth!.organizationId, request.params.id);
+    response.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/monitoring/:id/runs', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const runs = await monitoringService.getRuns(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: runs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/monitoring/:id/findings', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const findings = await monitoringService.getFindings(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: findings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/monitoring/:id/alerts', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const alerts = await monitoringService.getAlerts(request.auth!.organizationId, request.params.id);
+    response.json({ success: true, data: alerts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/monitoring/:id/alerts/:alertId/ack', requirePermission('MONITORING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const acked = await monitoringService.acknowledgeAlert(request.auth!.organizationId, request.params.alertId);
+    response.json({ success: true, data: acked });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/monitoring/:id/run', requirePermission('MONITOR_RUN'), async (request: AuthRequest, response, next) => {
+  try {
+    const res = await monitoringService.triggerManualRun(request.auth!.organizationId, request.params.id);
+    response.status(202).json({ success: true, data: res });
   } catch (error) {
     next(error);
   }

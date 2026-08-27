@@ -12,6 +12,8 @@ import { DashboardView } from '../features/dashboard/DashboardView.js';
 import { WebsiteListView, WebsiteDetailView } from '../features/websites/WebsiteViews.js';
 import { AuditListView } from '../features/audits/AuditListView.js';
 import { AuditDetailView } from '../features/audits/AuditDetailView.js';
+import { MonitoringView } from '../features/monitoring/MonitoringView.js';
+import { MonitorDetailView } from '../features/monitoring/MonitorDetailView.js';
 import { BillingView } from '../features/billing/BillingView.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -88,6 +90,22 @@ export function App() {
           element={
             <ProtectedRoute>
               <AuditDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/monitoring"
+          element={
+            <ProtectedRoute>
+              <MonitoringView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/monitoring/:id"
+          element={
+            <ProtectedRoute>
+              <MonitorDetailView />
             </ProtectedRoute>
           }
         />

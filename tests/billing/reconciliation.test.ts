@@ -16,7 +16,7 @@ describe('Billing: State Reconciliation Foundation (Requirement 23, 35)', () => 
         organizationId: org.id,
         planId: plan!.id,
         status: 'ACTIVE',
-        providerSubscriptionId: 'invalid_prefix_123',
+        providerSubscriptionId: `invalid_prefix_${Date.now()}`,
       },
     });
 

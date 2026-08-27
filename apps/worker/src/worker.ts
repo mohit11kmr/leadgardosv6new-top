@@ -3,6 +3,7 @@ import { Worker, Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { processAudit } from './audit.js';
+import { processMonitoringJob, type MonitoringJobData } from './monitoring/index.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -25,6 +26,16 @@ export const auditQueue = new Queue('audit', {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: 'exponential', delay: 1000 },
+    removeOnComplete: 100,
+    removeOnFail: 100,
+  },
+});
+
+export const monitoringQueue = new Queue('monitoring', {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 3000 },
     removeOnComplete: 100,
     removeOnFail: 100,
   },
@@ -75,10 +86,43 @@ auditWorker.on('failed', (job, error) =>
   )
 );
 
+const monitoringWorker = new Worker(
+  'monitoring',
+  async (job) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    try {
+      return await processMonitoringJob(job.data as MonitoringJobData, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+  { connection, concurrency: 2 }
+);
+
+monitoringWorker.on('failed', (job, error) =>
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      service: 'worker',
+      event: 'monitoring_failed',
+      jobId: job?.id,
+      error: error.message,
+    })
+  )
+);
+
 const billingWebhookWorker = new Worker(
   'billing-webhook',
   async (job) => {
-    console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'billing_webhook_processed', jobId: job.id }));
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        service: 'worker',
+        event: 'billing_webhook_processed',
+        jobId: job.id,
+      })
+    );
     return { processed: true, eventId: job.data.eventId };
   },
   { connection, concurrency: 2 }

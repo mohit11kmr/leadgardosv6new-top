@@ -16,7 +16,10 @@ export type Capability =
   | 'API_KEY_MANAGE'
   | 'BILLING_VIEW'
   | 'BILLING_MANAGE'
-  | 'SUBSCRIPTION_MANAGE';
+  | 'SUBSCRIPTION_MANAGE'
+  | 'MONITORING_VIEW'
+  | 'MONITORING_MANAGE'
+  | 'MONITOR_RUN';
 
 const PERMISSION_MATRIX: Record<Capability, RoleType[]> = {
   AUDIT_VIEW: ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER', 'AGENCY_ADMIN', 'AGENCY_MEMBER'],
@@ -31,6 +34,9 @@ const PERMISSION_MATRIX: Record<Capability, RoleType[]> = {
   BILLING_VIEW: ['OWNER', 'ADMIN', 'AGENCY_ADMIN'],
   BILLING_MANAGE: ['OWNER', 'ADMIN'],
   SUBSCRIPTION_MANAGE: ['OWNER'],
+  MONITORING_VIEW: ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER', 'AGENCY_ADMIN', 'AGENCY_MEMBER'],
+  MONITORING_MANAGE: ['OWNER', 'ADMIN', 'AGENCY_ADMIN'],
+  MONITOR_RUN: ['OWNER', 'ADMIN', 'MEMBER', 'AGENCY_ADMIN'],
 };
 
 export function hasPermission(role: RoleType, capability: Capability): boolean {

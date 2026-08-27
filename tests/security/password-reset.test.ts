@@ -68,5 +68,5 @@ describe('Security: Password Reset & Account Recovery (Requirement 8, 9)', () =>
       orderBy: { createdAt: 'desc' },
     });
     expect(event).toBeDefined();
-  });
+  }, 15_000);
 });

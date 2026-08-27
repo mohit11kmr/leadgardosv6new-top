@@ -85,6 +85,37 @@ enum UsageMetric {
   MONITORING
 }
 
+enum MonitoringFrequency {
+  FIVE_MINUTES
+  FIFTEEN_MINUTES
+  HOURLY
+  DAILY
+}
+
+enum MonitoringStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+  SKIPPED
+}
+
+enum FindingChangeType {
+  NEW
+  RESOLVED
+  PERSISTING
+  REGRESSED
+  UNCHANGED
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  SUPPRESSED
+}
+
 model User {
   id                      String                   @id @default(uuid())
   email                   String                   @unique
@@ -165,25 +196,27 @@ model SecurityEvent {
 }
 
 model Organization {
-  id               String            @id @default(uuid())
-  name             String
-  slug             String            @unique
-  deletedAt        DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  members          OrganizationMember[]
-  websites         Website[]
-  audits           Audit[]
-  subscriptions    Subscription[]
-  payments         Payment[]
-  invoices         Invoice[]
-  billingEvents    BillingEvent[]
-  usageRecords     UsageRecord[]
-  apiKeys          ApiKey[]
-  webhooks         WebhookEndpoint[]
-  reports          Report[]
-  monitoringAlerts MonitoringAlert[]
-  testimonials     Testimonial[]
+  id                String              @id @default(uuid())
+  name              String
+  slug              String              @unique
+  deletedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  members           OrganizationMember[]
+  websites          Website[]
+  audits            Audit[]
+  subscriptions     Subscription[]
+  payments          Payment[]
+  invoices          Invoice[]
+  billingEvents     BillingEvent[]
+  usageRecords      UsageRecord[]
+  apiKeys           ApiKey[]
+  webhooks          WebhookEndpoint[]
+  reports           Report[]
+  monitoringConfigs MonitoringConfig[]
+  monitoringRuns    MonitoringRun[]
+  monitoringAlerts  MonitoringAlert[]
+  testimonials      Testimonial[]
 }
 
 model OrganizationMember {
@@ -199,20 +232,21 @@ model OrganizationMember {
 }
 
 model Website {
-  id             String          @id @default(uuid())
-  organizationId String
-  url            String
-  normalizedUrl  String
-  domain         String
-  name           String
-  status         String          @default("ACTIVE")
-  deletedAt      DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domains        WebsiteDomain[]
-  settings       WebsiteSettings?
-  audits         Audit[]
+  id               String            @id @default(uuid())
+  organizationId   String
+  url              String
+  normalizedUrl    String
+  domain           String
+  name             String
+  status           String            @default("ACTIVE")
+  deletedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domains          WebsiteDomain[]
+  settings         WebsiteSettings?
+  audits           Audit[]
+  monitoringConfig MonitoringConfig?
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
@@ -371,12 +405,106 @@ model ReportShareLink {
   report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
 
-model MonitoringAlert {
-  id             String       @id @default(uuid())
+model MonitoringConfig {
+  id             String              @id @default(uuid())
   organizationId String
-  status         String
-  createdAt      DateTime     @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  websiteId      String              @unique
+  enabled        Boolean             @default(true)
+  frequency      MonitoringFrequency @default(HOURLY)
+  healthChecks   Json?
+  alertPolicy    Json?
+  baseline       Json?
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website        Website             @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  runs           MonitoringRun[]
+  findings       MonitoringFinding[]
+  alerts         MonitoringAlert[]
+
+  @@index([organizationId, enabled])
+  @@index([enabled, nextRunAt])
+}
+
+model MonitoringRun {
+  id                  String            @id @default(uuid())
+  monitoringConfigId  String
+  websiteId           String
+  organizationId      String
+  status              MonitoringStatus  @default(QUEUED)
+  httpStatus          Int?
+  responseTimeMs      Int?
+  tlsValid            Boolean?
+  tlsExpiresAt        DateTime?
+  redirectChain       Json?
+  scores              Json?
+  scoreDeltas         Json?
+  findingsCount       Int               @default(0)
+  newRegressionsCount Int               @default(0)
+  resolvedCount       Int               @default(0)
+  telemetry           Json?
+  errorCode           String?
+  scheduledAt         DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  durationMs          Int?
+  createdAt           DateTime          @default(now())
+  config              MonitoringConfig  @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
+  organization        Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  findings            MonitoringFinding[]
+  alerts              MonitoringAlert[]
+
+  @@index([monitoringConfigId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model MonitoringFinding {
+  id                 String            @id @default(uuid())
+  monitoringRunId    String
+  monitoringConfigId String
+  websiteId          String
+  organizationId     String
+  ruleId             String
+  category           String
+  severity           Severity
+  changeType         FindingChangeType
+  title              String
+  description        String
+  beforeState        Json?
+  afterState         Json?
+  evidence           Json?
+  detectedAt         DateTime          @default(now())
+  run                MonitoringRun     @relation(fields: [monitoringRunId], references: [id], onDelete: Cascade)
+  config             MonitoringConfig  @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
+
+  @@index([monitoringConfigId, detectedAt])
+  @@index([monitoringRunId, changeType])
+}
+
+model MonitoringAlert {
+  id                 String            @id @default(uuid())
+  organizationId     String
+  monitoringConfigId String?
+  monitoringRunId    String?
+  websiteId          String?
+  fingerprint        String
+  ruleId             String?
+  severity           Severity          @default(HIGH)
+  title              String
+  message            String
+  status             AlertStatus       @default(OPEN)
+  acknowledgedAt     DateTime?
+  resolvedAt         DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  config             MonitoringConfig? @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
+  run                MonitoringRun?    @relation(fields: [monitoringRunId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([monitoringConfigId, fingerprint])
 }
 
 model Plan {
