@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import { Button } from '../../components/ui/Button.js';
 import { Input } from '../../components/ui/Input.js';
@@ -50,6 +51,11 @@ export function LoginView({ onSwitchToRegister }: { onSwitchToRegister: () => vo
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          <div className="forgotPasswordRow mb3">
+            <Link to="/password-reset" className="btnLink textSm">
+              Forgot password?
+            </Link>
+          </div>
           <Button variant="primary" type="submit" isLoading={loading} className="wFull">
             Sign In
           </Button>

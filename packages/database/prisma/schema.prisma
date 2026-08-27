@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
+
 enum Role {
   OWNER
   ADMIN
@@ -13,6 +15,7 @@ enum Role {
   AGENCY_ADMIN
   AGENCY_MEMBER
 }
+
 enum AuditStatus {
   QUEUED
   RUNNING
@@ -21,6 +24,7 @@ enum AuditStatus {
   FAILED
   CANCELLED
 }
+
 enum Severity {
   CRITICAL
   HIGH
@@ -28,264 +32,352 @@ enum Severity {
   LOW
   INFO
 }
-model User {
-  id String @id @default(uuid())
-  email String @unique
-  passwordHash String
-  emailVerifiedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  memberships OrganizationMember[]
-  sessions Session[]
-  accounts Account[]
-  securityEvents SecurityEvent[]
-}
-model Account {
-  id String @id @default(uuid())
-  userId String
-  provider String
-  providerAccountId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@unique([provider, providerAccountId])
-}
-model Session {
-  id String @id @default(uuid())
-  userId String
-  refreshTokenHash String @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@index([userId, revokedAt])
-}
-model SecurityEvent {
-  id String @id @default(uuid())
-  userId String?
-  type String
-  ipAddress String?
-  metadata Json?
-  createdAt DateTime @default(now())
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-}
-model Organization {
-  id String @id @default(uuid())
-  name String
-  slug String @unique
-  deletedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  members OrganizationMember[]
-  websites Website[]
-  audits Audit[]
-  subscriptions Subscription[]
-  apiKeys ApiKey[]
-  reports Report[]
-  monitoringAlerts MonitoringAlert[]
-  testimonials Testimonial[]
-}
-model OrganizationMember {
-  organizationId String
-  userId String
-  role Role
-  createdAt DateTime @default(now())
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@id([organizationId, userId])
-  @@index([userId])
-}
-model Website {
-  id String @id @default(uuid())
-  organizationId String
-  url String
-  normalizedUrl String
-  domain String
-  name String
-  status String @default("ACTIVE")
-  deletedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domains WebsiteDomain[]
-  settings WebsiteSettings?
-  audits Audit[]
-  @@unique([organizationId, url])
-  @@index([organizationId, deletedAt])
-}
-model WebsiteDomain {
-  id String @id @default(uuid())
-  websiteId String
-  hostname String
-  verifiedAt DateTime?
-  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  @@unique([websiteId, hostname])
-}
-model WebsiteSettings {
-  websiteId String @id
-  settings Json
-  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-}
-model Audit {
-  id String @id @default(uuid())
-  organizationId String
-  websiteId String
-  status AuditStatus @default(QUEUED)
-  progress Int @default(0)
-  progressStage String @default("queued")
-  idempotencyKey String?
-  scoringVersion String @default("v1")
-  queuedAt DateTime @default(now())
-  startedAt DateTime?
-  completedAt DateTime?
-  durationMs Int?
-  pagesDiscovered Int @default(0)
-  pagesFetched Int @default(0)
-  pagesScanned Int @default(0)
-  findingsGenerated Int @default(0)
-  businessImpact Json?
-  executiveSummary Json?
-  telemetry Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  runs AuditRun[]
-  pages AuditPage[]
-  findings AuditFinding[]
-  score AuditScore?
-  reports Report[]
-  @@index([organizationId, createdAt])
-  @@index([websiteId, status])
-  @@unique([organizationId, idempotencyKey])
-}
-model AuditPage {
-  id String @id @default(uuid())
-  auditId String
-  url String
-  finalUrl String
-  statusCode Int?
-  title String?
-  contentType String?
-  headers Json?
-  htmlAvailable Boolean @default(false)
-  responseTimeMs Int?
-  depth Int
-  parentUrl String?
-  errorCode String?
-  redirectChain Json?
-  createdAt DateTime @default(now())
-  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
-  @@unique([auditId, url])
-  @@index([auditId, depth])
-}
+
 enum FindingScope {
   PAGE
   WEBSITE
   AUDIT
 }
-model AuditRun {
-  id String @id @default(uuid())
-  auditId String
-  status AuditStatus @default(QUEUED)
-  pagesFetched Int @default(0)
-  findingsCount Int @default(0)
-  durationMs Int?
-  errorCode String?
-  startedAt DateTime?
-  completedAt DateTime?
+
+model User {
+  id                      String                   @id @default(uuid())
+  email                   String                   @unique
+  passwordHash            String
+  emailVerifiedAt         DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  memberships             OrganizationMember[]
+  sessions                Session[]
+  accounts                Account[]
+  securityEvents          SecurityEvent[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+}
+
+model Account {
+  id                String @id @default(uuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  user              User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id                  String    @id @default(uuid())
+  userId              String
+  refreshTokenHash    String    @unique
+  replacedByTokenHash String?
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  lastSeenAt          DateTime  @default(now())
+  ipAddress           String?
+  userAgent           String?
+  createdAt           DateTime  @default(now())
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model SecurityEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  type      String
+  ipAddress String?
+  metadata  Json?
   createdAt DateTime @default(now())
-  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+model Organization {
+  id               String            @id @default(uuid())
+  name             String
+  slug             String            @unique
+  deletedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  members          OrganizationMember[]
+  websites         Website[]
+  audits           Audit[]
+  subscriptions    Subscription[]
+  apiKeys          ApiKey[]
+  webhooks         WebhookEndpoint[]
+  reports          Report[]
+  monitoringAlerts MonitoringAlert[]
+  testimonials     Testimonial[]
+}
+
+model OrganizationMember {
+  organizationId String
+  userId         String
+  role           Role
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, userId])
+  @@index([userId])
+}
+
+model Website {
+  id            String          @id @default(uuid())
+  organizationId String
+  url           String
+  normalizedUrl String
+  domain        String
+  name          String
+  status        String          @default("ACTIVE")
+  deletedAt     DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domains       WebsiteDomain[]
+  settings      WebsiteSettings?
+  audits        Audit[]
+
+  @@unique([organizationId, url])
+  @@index([organizationId, deletedAt])
+}
+
+model WebsiteDomain {
+  id         String    @id @default(uuid())
+  websiteId  String
+  hostname   String
+  verifiedAt DateTime?
+  website    Website   @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, hostname])
+}
+
+model WebsiteSettings {
+  websiteId String  @id
+  settings  Json
+  website   Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+}
+
+model Audit {
+  id                String         @id @default(uuid())
+  organizationId    String
+  websiteId         String
+  status            AuditStatus    @default(QUEUED)
+  progress          Int            @default(0)
+  progressStage     String         @default("queued")
+  idempotencyKey    String?
+  scoringVersion    String         @default("v3")
+  queuedAt          DateTime       @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  durationMs        Int?
+  pagesDiscovered   Int            @default(0)
+  pagesFetched      Int            @default(0)
+  pagesScanned      Int            @default(0)
+  findingsGenerated Int            @default(0)
+  businessImpact    Json?
+  executiveSummary  Json?
+  telemetry         Json?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website           Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  runs              AuditRun[]
+  pages             AuditPage[]
+  findings          AuditFinding[]
+  score             AuditScore?
+  reports           Report[]
+
+  @@index([organizationId, createdAt])
+  @@index([websiteId, status])
+  @@unique([organizationId, idempotencyKey])
+}
+
+model AuditPage {
+  id             String   @id @default(uuid())
+  auditId        String
+  url            String
+  finalUrl       String
+  statusCode     Int?
+  title          String?
+  contentType    String?
+  headers        Json?
+  htmlAvailable  Boolean  @default(false)
+  responseTimeMs Int?
+  depth          Int
+  parentUrl      String?
+  errorCode      String?
+  redirectChain  Json?
+  createdAt      DateTime @default(now())
+  audit          Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@unique([auditId, url])
+  @@index([auditId, depth])
+}
+
+model AuditRun {
+  id            String      @id @default(uuid())
+  auditId       String
+  status        AuditStatus @default(QUEUED)
+  pagesFetched  Int         @default(0)
+  findingsCount Int         @default(0)
+  durationMs    Int?
+  errorCode     String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  audit         Audit       @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
   @@index([auditId, createdAt])
 }
+
 model AuditFinding {
-  id String @id @default(uuid())
-  auditId String
-  ruleId String
-  internalKey String?
+  id                 String       @id @default(uuid())
+  auditId            String
+  ruleId             String
+  internalKey        String?
   normalizedIssueKey String?
-  category String
-  scope FindingScope @default(PAGE)
-  severity Severity
-  title String
-  description String
-  evidence Json
-  affectedUrl String?
-  recommendation String
-  scoreImpact Int
-  businessImpact String?
-  metadata Json?
-  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  category           String
+  scope              FindingScope @default(PAGE)
+  severity           Severity
+  title              String
+  description        String
+  evidence           Json
+  affectedUrl        String?
+  recommendation     String
+  scoreImpact        Int
+  businessImpact     String?
+  metadata           Json?
+  audit              Audit        @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
   @@index([auditId, severity])
   @@index([auditId, scope])
   @@index([auditId, category])
   @@index([auditId, normalizedIssueKey])
 }
+
 model AuditScore {
-  auditId String @id
-  lead Int
+  auditId     String @id
+  lead        Int
   advertising Int
-  seo Int
-  security Int
-  overall Int
-  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  seo         Int
+  security    Int
+  overall     Int
+  audit       Audit  @relation(fields: [auditId], references: [id], onDelete: Cascade)
 }
+
 model Report {
-  id String @id @default(uuid())
+  id             String            @id @default(uuid())
   organizationId String
-  auditId String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  audit Audit @relation(fields: [auditId], references: [id])
-  versions ReportVersion[]
-  shareLinks ReportShareLink[]
+  auditId        String
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  audit          Audit             @relation(fields: [auditId], references: [id])
+  versions       ReportVersion[]
+  shareLinks     ReportShareLink[]
 }
+
 model ReportVersion {
-  id String @id @default(uuid())
+  id       String @id @default(uuid())
   reportId String
-  version Int
-  content Json
-  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  version  Int
+  content  Json
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
   @@unique([reportId, version])
 }
+
 model ReportShareLink {
-  id String @id @default(uuid())
-  reportId String
-  tokenHash String @unique
+  id        String    @id @default(uuid())
+  reportId  String
+  tokenHash String    @unique
   expiresAt DateTime?
   revokedAt DateTime?
-  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
+
 model MonitoringAlert {
-  id String @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
-  status String
-  createdAt DateTime @default(now())
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status         String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
+
 model Plan {
-  id String @id @default(uuid())
-  code String @unique
-  name String
+  id            String         @id @default(uuid())
+  code          String         @unique
+  name          String
   subscriptions Subscription[]
 }
+
 model Subscription {
-  id String @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
-  planId String
-  status String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  plan Plan @relation(fields: [planId], references: [id])
+  planId         String
+  status         String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan           Plan         @relation(fields: [planId], references: [id])
 }
+
 model ApiKey {
-  id String @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
-  name String
-  keyHash String @unique
-  scopes String[]
-  revokedAt DateTime?
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  keyPrefix      String?
+  keyHash        String       @unique
+  scopes         String[]
+  expiresAt      DateTime?
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, revokedAt])
 }
-model Testimonial {
-  id String @id @default(uuid())
+
+model WebhookEndpoint {
+  id             String       @id @default(uuid())
   organizationId String
-  quote String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  url            String
+  secretHash     String
+  events         String[]
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled])
+}
+
+model Testimonial {
+  id             String       @id @default(uuid())
+  organizationId String
+  quote          String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }

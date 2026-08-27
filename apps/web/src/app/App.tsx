@@ -3,6 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth.js';
 import { Shell } from '../components/layout/Shell.js';
 import { LoginView, RegisterView } from '../features/auth/AuthViews.js';
+import {
+  PasswordResetRequestView,
+  PasswordResetConfirmView,
+} from '../features/auth/PasswordResetViews.js';
+import { SessionsView } from '../features/auth/SessionsView.js';
 import { DashboardView } from '../features/dashboard/DashboardView.js';
 import { WebsiteListView, WebsiteDetailView } from '../features/websites/WebsiteViews.js';
 import { AuditListView } from '../features/audits/AuditListView.js';
@@ -42,6 +47,9 @@ export function App() {
             )
           }
         />
+        <Route path="/password-reset" element={<PasswordResetRequestView />} />
+        <Route path="/password-reset/confirm" element={<PasswordResetConfirmView />} />
+
         <Route
           path="/dashboard"
           element={
@@ -79,6 +87,14 @@ export function App() {
           element={
             <ProtectedRoute>
               <AuditDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/security/sessions"
+          element={
+            <ProtectedRoute>
+              <SessionsView />
             </ProtectedRoute>
           }
         />

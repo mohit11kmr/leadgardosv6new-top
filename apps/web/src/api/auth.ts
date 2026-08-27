@@ -1,29 +1,27 @@
-import { accessTokenKey, apiClient, refreshTokenKey } from './client.js';
+import { accessTokenKey, apiClient } from './client.js';
 
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
+export interface UserSession {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  isCurrent: boolean;
 }
 
 export interface AuthResult {
   user?: { id: string; email: string };
   organization?: { id: string; name: string };
   accessToken: string;
-  refreshToken: string;
 }
 
-export function persistTokens(tokens: { accessToken?: string; refreshToken?: string }) {
-  if (!tokens.accessToken || !tokens.refreshToken) {
-    throw new Error('Authentication response missing tokens');
-  }
-  localStorage.setItem(accessTokenKey, tokens.accessToken);
-  localStorage.setItem(refreshTokenKey, tokens.refreshToken);
+export function persistAccessToken(token: string) {
+  localStorage.setItem(accessTokenKey, token);
   window.dispatchEvent(new Event('leadguard-auth-changed'));
 }
 
-export function clearTokens() {
+export function clearAccessToken() {
   localStorage.removeItem(accessTokenKey);
-  localStorage.removeItem(refreshTokenKey);
   window.dispatchEvent(new Event('leadguard-auth-changed'));
 }
 
@@ -36,7 +34,9 @@ export async function login(input: { email: string; password: string }): Promise
     method: 'POST',
     body: JSON.stringify(input),
   });
-  persistTokens(data);
+  if (data.accessToken) {
+    persistAccessToken(data.accessToken);
+  }
   return data;
 }
 
@@ -49,17 +49,54 @@ export async function register(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  persistTokens(data);
+  if (data.accessToken) {
+    persistAccessToken(data.accessToken);
+  }
   return data;
 }
 
 export async function logout(): Promise<void> {
-  const token = localStorage.getItem(refreshTokenKey);
-  if (token) {
+  try {
     await apiClient<void>('/auth/logout', {
       method: 'POST',
-      body: JSON.stringify({ refreshToken: token }),
-    }).catch(() => {});
+    });
+  } catch {
+    // Ignore network errors on logout
+  } finally {
+    clearAccessToken();
   }
-  clearTokens();
+}
+
+export async function logoutAll(): Promise<void> {
+  try {
+    await apiClient<void>('/auth/logout-all', {
+      method: 'POST',
+    });
+  } finally {
+    clearAccessToken();
+  }
+}
+
+export async function getSessions(): Promise<UserSession[]> {
+  return apiClient<UserSession[]>('/auth/sessions');
+}
+
+export async function revokeSession(id: string): Promise<void> {
+  return apiClient<void>(`/auth/sessions/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function requestPasswordReset(email: string): Promise<{ message: string }> {
+  return apiClient<{ message: string }>('/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function confirmPasswordReset(token: string, newPassword: string): Promise<{ success: boolean }> {
+  return apiClient<{ success: boolean }>('/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword }),
+  });
 }
