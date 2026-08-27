@@ -17,7 +17,9 @@ enum AuditStatus {
   QUEUED
   RUNNING
   COMPLETED
+  PARTIAL
   FAILED
+  CANCELLED
 }
 enum Severity {
   CRITICAL
@@ -95,7 +97,10 @@ model Website {
   id String @id @default(uuid())
   organizationId String
   url String
+  normalizedUrl String
+  domain String
   name String
+  status String @default("ACTIVE")
   deletedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -124,6 +129,10 @@ model Audit {
   organizationId String
   websiteId String
   status AuditStatus @default(QUEUED)
+  progress Int @default(0)
+  progressStage String @default("queued")
+  idempotencyKey String?
+  scoringVersion String @default("v1")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -133,6 +142,7 @@ model Audit {
   score AuditScore?
   reports Report[]
   @@index([organizationId, createdAt])
+  @@unique([organizationId, idempotencyKey])
 }
 model AuditRun {
   id String @id @default(uuid())

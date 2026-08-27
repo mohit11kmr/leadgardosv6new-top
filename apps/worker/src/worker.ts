@@ -1,2 +1,11 @@
-import 'dotenv/config'; import {Worker,Queue} from 'bullmq'; import {Redis} from 'ioredis'; import {config} from '@leadguard/config';
-const connection=new Redis(config.REDIS_URL,{maxRetriesPerRequest:null}); export const queueNames=['audit','audit-page','audit-finalize','monitoring','report','prospect','email','webhook','cleanup'] as const; export const auditQueue=new Queue('audit',{connection,defaultJobOptions:{attempts:3,backoff:{type:'exponential',delay:1000},removeOnComplete:100,removeOnFail:100}}); new Worker('audit',async job=>({auditId:job.data.auditId,status:'foundation-ready'}),{connection,concurrency:2}); console.log('LeadGuard worker listening');
+import 'dotenv/config';
+import { Worker, Queue } from 'bullmq';
+import { Redis } from 'ioredis';
+import { config } from '@leadguard/config';
+import { processAudit } from './audit.js';
+const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+export const queueNames = ['audit', 'audit-page', 'audit-finalize', 'monitoring', 'report', 'prospect', 'email', 'webhook', 'cleanup'] as const;
+export const auditQueue = new Queue('audit', { connection, defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: 100, removeOnFail: 100 } });
+const worker = new Worker('audit', async (job) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120_000); try { return await processAudit(job.data.auditId as string, controller.signal); } finally { clearTimeout(timer); } }, { connection, concurrency: Number(process.env.AUDIT_CONCURRENCY ?? 2) });
+worker.on('failed', (job, error) => console.error(JSON.stringify({ level: 'error', service: 'worker', event: 'audit_failed', jobId: job?.id, error: error.message })));
+console.log('LeadGuard worker listening');
