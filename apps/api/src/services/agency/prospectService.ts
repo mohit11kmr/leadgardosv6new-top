@@ -6,7 +6,17 @@ import { validateExternalUrl, normalizeUrl } from '@leadguard/shared';
 import { entitlementService } from '../entitlementService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-export const prospectQueue = new Queue('agency-prospect', { connection });
+export const prospectQueue = new Queue('agency-prospect', {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 3000,
+    },
+    removeOnComplete: true,
+  },
+});
 
 export const MAX_PROSPECT_IMPORT_ROWS = 500;
 export const MAX_PROSPECT_IMPORT_BYTES = 10 * 1024 * 1024; // 10MB
@@ -20,6 +30,20 @@ export interface ProspectInputItem {
 
 export interface ProspectSource {
   extract(): Promise<ProspectInputItem[]>;
+}
+
+export interface StorageDriver {
+  saveStagedFile(filename: string, content: string | Buffer): Promise<string>;
+  readStagedFile(filePath: string): Promise<string>;
+}
+
+export class LocalStorageDriver implements StorageDriver {
+  async saveStagedFile(filename: string, content: string | Buffer): Promise<string> {
+    return `staged://${filename}`;
+  }
+  async readStagedFile(filePath: string): Promise<string> {
+    return '';
+  }
 }
 
 export class ManualProspectSource implements ProspectSource {
@@ -195,6 +219,11 @@ export class ProspectService {
       sourceType: 'MANUAL' | 'CSV';
       items?: ProspectInputItem[];
       csvContent?: string;
+      qualificationCriteria?: {
+        maxLeadScore?: number;
+        minCriticalFindings?: number;
+        minHighFindings?: number;
+      };
     }
   ) {
     // 1. Extract prospect items from source
@@ -227,6 +256,7 @@ export class ProspectService {
         source: input.sourceType,
         targetCount: rawItems.length,
         status: 'DRAFT',
+        qualificationCriteria: (input.qualificationCriteria as object) || null,
       },
     });
 
@@ -281,22 +311,33 @@ export class ProspectService {
     });
     if (!campaign) throw new Error('Prospect campaign not found');
 
-    if (campaign.status === 'RUNNING') {
-      return { enqueued: false, message: 'Campaign is already running' };
+    if (campaign.status === 'RUNNING' || campaign.status === 'QUEUED') {
+      return { enqueued: false, message: 'Campaign is already queued or running' };
     }
 
-    await db.prospectCampaign.update({
-      where: { id: campaignId },
-      data: { status: 'QUEUED', startedAt: new Date() },
-    });
+    // Atomic Distributed Lock to prevent concurrent job enqueue races
+    const lockKey = `camp:start:lock:${campaignId}`;
+    const acquired = await connection.set(lockKey, '1', 'PX', 5000, 'NX');
+    if (!acquired) {
+      return { enqueued: false, message: 'Campaign start already in progress' };
+    }
 
-    const job = await prospectQueue.add(
-      'process-campaign',
-      { campaignId, organizationId },
-      { jobId: `camp_${campaignId}` }
-    );
+    try {
+      await db.prospectCampaign.update({
+        where: { id: campaignId },
+        data: { status: 'QUEUED', startedAt: new Date() },
+      });
 
-    return { enqueued: true, jobId: job.id, status: 'QUEUED' };
+      const job = await prospectQueue.add(
+        'process-campaign',
+        { campaignId, organizationId },
+        { jobId: `camp_${campaignId}` }
+      );
+
+      return { enqueued: true, jobId: job.id, status: 'QUEUED' };
+    } finally {
+      await connection.del(lockKey);
+    }
   }
 
   async pauseCampaign(organizationId: string, campaignId: string) {
@@ -323,15 +364,27 @@ export class ProspectService {
     });
   }
 
-  async listCampaigns(organizationId: string) {
-    return db.prospectCampaign.findMany({
+  async listCampaigns(
+    organizationId: string,
+    options: { cursor?: string; limit?: number } = {}
+  ) {
+    const limit = Math.max(1, Math.min(100, options.limit || 50));
+    const campaigns = await db.prospectCampaign.findMany({
       where: { organizationId },
       orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
       include: {
         clientWorkspace: { select: { id: true, name: true } },
         _count: { select: { prospects: true } },
       },
     });
+
+    const hasNextPage = campaigns.length > limit;
+    const items = hasNextPage ? campaigns.slice(0, limit) : campaigns;
+    const nextCursor = hasNextPage ? items[items.length - 1]?.id : null;
+
+    return { items, hasNextPage, nextCursor };
   }
 
   async getCampaign(organizationId: string, campaignId: string) {

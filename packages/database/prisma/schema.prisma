@@ -728,6 +728,7 @@ model ProspectCampaign {
   failedCount       Int              @default(0)
   skippedCount      Int              @default(0)
   qualifiedCount    Int              @default(0)
+  qualificationCriteria Json?
   errorMessage      String?
   startedAt         DateTime?
   completedAt       DateTime?
@@ -799,6 +800,7 @@ model Pitch {
   prospect        Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@unique([prospectId, version])
   @@index([prospectId, createdAt])
   @@index([organizationId, createdAt])
 }

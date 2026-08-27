@@ -2,17 +2,27 @@ import { db } from '@leadguard/database';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
+import {
+  ClaimValidator,
+  type ClaimReference,
+  type VerifiedContext,
+  type RawPitchOutput,
+} from '@leadguard/shared';
 import { entitlementService } from '../entitlementService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-export const pitchQueue = new Queue('agency-pitch', { connection });
-
-export interface ClaimReference {
-  findingId?: string;
-  featureId?: string;
-  category?: string;
-  claim: string;
-}
+export const pitchQueue = new Queue('agency-pitch', {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+    },
+    removeOnComplete: true,
+    removeOnFail: false,
+  },
+});
 
 export interface GroundedPitchContext {
   domain: string;
@@ -28,8 +38,9 @@ export interface GroundedPitchContext {
     severity: string;
     featureId?: string;
   }>;
+  assumptions?: string[];
   potentialOpportunity?: string | null;
-  tone: string;
+  tone: 'PROFESSIONAL' | 'DIRECT' | 'CONSULTATIVE' | 'URGENT';
   language: string;
 }
 
@@ -57,54 +68,62 @@ export interface AIProvider {
 
 export class TemplateAIProvider implements AIProvider {
   readonly providerName = 'DETERMINISTIC_TEMPLATE';
-  readonly modelName = 'template-v1';
+  readonly modelName: string;
+
+  constructor(modelName = 'template-v1') {
+    this.modelName = process.env.AI_MODEL || modelName;
+  }
 
   async generatePitch(context: GroundedPitchContext): Promise<AIProviderResult> {
     const name = context.businessName || context.domain;
-    const claimReferences: ClaimReference[] = [];
+    const hasFindings = context.verifiedFindings.length > 0;
 
-    let issuesText: string;
-    if (context.verifiedFindings.length > 0) {
+    let subject: string;
+    let opening: string;
+    let problem: string;
+    let businessImpact: string;
+    let recommendation: string;
+    let callToAction: string;
+
+    if (hasFindings) {
       const topFindings = context.verifiedFindings.slice(0, 3);
-      issuesText = topFindings.map((f) => f.title).join(', ');
-      for (const f of topFindings) {
-        claimReferences.push({
-          findingId: f.id,
-          featureId: f.featureId,
-          category: f.category,
-          claim: `Identified issue: ${f.title}`,
-        });
-      }
+      const issuesText = topFindings.map((f) => f.title).join(', ');
+
+      subject = `Quick question regarding ${context.domain}'s lead conversion (Score: ${context.leadScore}/100)`;
+      opening = `Hi ${name} team,\n\nI was reviewing ${context.domain} and noticed conversion bottlenecks that may impact your inbound lead capture rate.`;
+      problem = `During our diagnostic evaluation, we verified ${context.criticalFindingsCount} critical and ${context.highFindingsCount} high-priority items, specifically: ${issuesText}.`;
+      businessImpact = `Based on LeadGuard's diagnostic scoring, these factors contribute to an overall conversion readiness score of ${context.leadScore}/100.`;
+      recommendation = `Remediating these verified bottlenecks will remove conversion friction for prospective customers visiting ${context.domain}.`;
+      callToAction = `Would you be open to a 10-minute walkthrough where I show you the exact code fixes we generated for ${context.domain}?`;
     } else {
-      issuesText = 'overall conversion optimization opportunities';
-      claimReferences.push({
-        claim: `Diagnostic evaluation score: ${context.leadScore}/100`,
-      });
+      // Neutral mode: never claim issues that don't exist
+      subject = `Diagnostic evaluation regarding ${context.domain}'s lead performance (Score: ${context.leadScore}/100)`;
+      opening = `Hi ${name} team,\n\nLeadGuard reviewed the available diagnostic baseline data for ${context.domain}.`;
+      problem = `Our baseline evaluation shows an overall conversion readiness score of ${context.leadScore}/100. No critical individual technical blocker was isolated, but optimization opportunities exist across standard lead capture channels.`;
+      businessImpact = `Sites scoring in this range typically benefit from proactive funnel hardening and continuous health monitoring.`;
+      recommendation = `Implementing continuous health monitoring will ensure future conversion leaks or tracking drop-offs are caught instantly.`;
+      callToAction = `Would you like us to share our full diagnostic checklist for ${context.domain}?`;
     }
 
-    const subject = `Quick question regarding ${context.domain}'s lead conversion (Score: ${context.leadScore}/100)`;
-    const opening = `Hi ${name} team,\n\nI was reviewing ${context.domain} and noticed conversion bottlenecks that may impact your inbound lead capture rate.`;
-    const problem = `During our automated diagnostic audit, we verified ${context.criticalFindingsCount} critical and ${context.highFindingsCount} high-priority items, specifically: ${issuesText}.`;
-    const businessImpact = `Based on LeadGuard's diagnostic analysis, these factors contribute to an overall conversion readiness score of ${context.leadScore}/100.`;
-    const recommendation = `Remediating these verified bottlenecks will remove conversion friction for prospective customers visiting ${context.domain}.`;
-    const callToAction = `Would you be open to a 10-minute walkthrough where I show you the exact code fixes we generated for ${context.domain}?`;
-
-    const content = `${subject}\n\n${opening}\n\n${problem}\n\n${businessImpact}\n\n${recommendation}\n\n${callToAction}\n\nBest regards,\nLeadGuard Agency Partner`;
+    const validated = ClaimValidator.validateAndSanitize(
+      { subject, opening, problem, businessImpact, recommendation, callToAction },
+      context
+    );
 
     return {
-      subject,
-      opening,
-      problem,
-      businessImpact,
-      recommendation,
-      callToAction,
-      content,
+      subject: validated.sanitizedPitch.subject,
+      opening: validated.sanitizedPitch.opening,
+      problem: validated.sanitizedPitch.problem,
+      businessImpact: validated.sanitizedPitch.businessImpact,
+      recommendation: validated.sanitizedPitch.recommendation,
+      callToAction: validated.sanitizedPitch.callToAction,
+      content: validated.content,
       tokensUsed: 250,
       estimatedCost: 0.0,
       provider: this.providerName,
       model: this.modelName,
       generationType: 'DETERMINISTIC_TEMPLATE',
-      claimReferences,
+      claimReferences: validated.claimReferences,
     };
   }
 }
@@ -115,7 +134,7 @@ export class GeminiProvider implements AIProvider {
   private apiKey?: string;
 
   constructor(modelName = 'gemini-1.5-flash', apiKey?: string) {
-    this.modelName = modelName;
+    this.modelName = process.env.AI_MODEL || modelName;
     this.apiKey = apiKey !== undefined ? apiKey : process.env.GEMINI_API_KEY;
     if (this.apiKey === 'MY_GEMINI_API_KEY' || !this.apiKey) {
       this.apiKey = undefined;
@@ -132,7 +151,8 @@ export class GeminiProvider implements AIProvider {
     const prompt = `You are a professional B2B conversion optimization strategist writing a cold outreach email.
 CRITICAL GROUNDING RULES:
 1. ONLY reference verified audit findings provided below. DO NOT invent revenue loss numbers, employee counts, company history, or unverified findings.
-2. Maintain a ${context.tone} tone in ${context.language}.
+2. If no verified findings exist, adopt a neutral diagnostic posture without claiming specific flaws.
+3. Maintain a ${context.tone} tone in ${context.language}.
 
 TARGET SITE CONTEXT:
 - Domain: ${context.domain}
@@ -170,42 +190,35 @@ Respond with a JSON object strictly containing:
         throw new Error(`Gemini API returned status ${res.status}`);
       }
 
-      const body = await res.json() as any;
+      const body = (await res.json()) as any;
       const rawText = body.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) {
         throw new Error('Empty response from Gemini provider');
       }
 
-      const parsed = JSON.parse(rawText);
+      const parsed: RawPitchOutput = JSON.parse(rawText);
       if (!parsed.subject || !parsed.opening || !parsed.problem || !parsed.businessImpact || !parsed.recommendation || !parsed.callToAction) {
         const err = new Error('Invalid AI response structure');
         (err as unknown as { code: string }).code = 'INVALID_AI_RESPONSE';
         throw err;
       }
 
-      const claimReferences: ClaimReference[] = context.verifiedFindings.map((f) => ({
-        findingId: f.id,
-        featureId: f.featureId,
-        category: f.category,
-        claim: f.title,
-      }));
-
-      const content = `${parsed.subject}\n\n${parsed.opening}\n\n${parsed.problem}\n\n${parsed.businessImpact}\n\n${parsed.recommendation}\n\n${parsed.callToAction}`;
+      const validated = ClaimValidator.validateAndSanitize(parsed, context);
 
       return {
-        subject: parsed.subject,
-        opening: parsed.opening,
-        problem: parsed.problem,
-        businessImpact: parsed.businessImpact,
-        recommendation: parsed.recommendation,
-        callToAction: parsed.callToAction,
-        content,
+        subject: validated.sanitizedPitch.subject,
+        opening: validated.sanitizedPitch.opening,
+        problem: validated.sanitizedPitch.problem,
+        businessImpact: validated.sanitizedPitch.businessImpact,
+        recommendation: validated.sanitizedPitch.recommendation,
+        callToAction: validated.sanitizedPitch.callToAction,
+        content: validated.content,
         tokensUsed: body.usageMetadata?.totalTokenCount || 350,
         estimatedCost: 0.0005,
         provider: this.providerName,
         model: this.modelName,
         generationType: 'REAL_AI',
-        claimReferences,
+        claimReferences: validated.claimReferences,
       };
     } catch (err: any) {
       if (err.code === 'AI_PROVIDER_NOT_CONFIGURED' || err.code === 'INVALID_AI_RESPONSE') {
@@ -221,11 +234,9 @@ Respond with a JSON object strictly containing:
 export class PitchService {
   private aiProvider: AIProvider;
 
-  constructor(aiProvider?: AIProvider) {
-    if (aiProvider) {
-      this.aiProvider = aiProvider;
-    } else if (process.env.AI_PROVIDER === 'GEMINI') {
-      this.aiProvider = new GeminiProvider('gemini-2.5-flash', process.env.GEMINI_API_KEY);
+  constructor() {
+    if (process.env.AI_PROVIDER === 'GEMINI') {
+      this.aiProvider = new GeminiProvider('gemini-1.5-flash', process.env.GEMINI_API_KEY);
     } else {
       this.aiProvider = new TemplateAIProvider();
     }
@@ -233,10 +244,6 @@ export class PitchService {
 
   setProvider(provider: AIProvider) {
     this.aiProvider = provider;
-  }
-
-  getProvider(): AIProvider {
-    return this.aiProvider;
   }
 
   async enqueuePitchGeneration(
@@ -247,16 +254,16 @@ export class PitchService {
       language?: string;
       idempotencyKey?: string;
     } = {}
-  ) {
-    // 1. Entitlement check
+  ): Promise<{ generationId: string; status: string }> {
+    // 1. Check Plan Quota
     const entitlement = await entitlementService.canGeneratePitch(organizationId);
     if (!entitlement.allowed) {
-      const err = new Error(entitlement.reason);
+      const err = new Error(entitlement.reason || 'Pitch generation limit reached for your current subscription plan');
       (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
       throw err;
     }
 
-    // 2. Fetch prospect & check existence
+    // 2. Validate prospect exists
     const prospect = await db.prospect.findFirst({
       where: { id: prospectId, organizationId },
     });
@@ -266,7 +273,7 @@ export class PitchService {
       throw err;
     }
 
-    // 3. Check idempotency if key provided
+    // 3. Idempotency Check with Database Conflict Handling
     if (options.idempotencyKey) {
       const existing = await db.pitchGeneration.findUnique({
         where: {
@@ -280,22 +287,39 @@ export class PitchService {
         return {
           generationId: existing.id,
           status: existing.status,
-          pitchId: existing.pitchId,
         };
       }
     }
 
-    // 4. Create PitchGeneration record
-    const generation = await db.pitchGeneration.create({
-      data: {
-        organizationId,
-        prospectId,
-        status: 'QUEUED',
-        idempotencyKey: options.idempotencyKey || null,
-      },
-    });
+    let generation;
+    try {
+      generation = await db.pitchGeneration.create({
+        data: {
+          organizationId,
+          prospectId,
+          idempotencyKey: options.idempotencyKey || null,
+          status: 'QUEUED',
+        },
+      });
+    } catch (err: any) {
+      // Catch concurrent unique constraint race on idempotencyKey
+      if (err.code === 'P2002' && options.idempotencyKey) {
+        const existing = await db.pitchGeneration.findUnique({
+          where: {
+            organizationId_idempotencyKey: {
+              organizationId,
+              idempotencyKey: options.idempotencyKey,
+            },
+          },
+        });
+        if (existing) {
+          return { generationId: existing.id, status: existing.status };
+        }
+      }
+      throw err;
+    }
 
-    // 5. Enqueue BullMQ job
+    // Enqueue to BullMQ worker
     await pitchQueue.add(
       'generate-pitch',
       {
@@ -379,7 +403,7 @@ export class PitchService {
         throw new Error('Prospect not found');
       }
 
-      // Hard Grounding Rule: Reject if there is no verified audit data or score
+      // Hard Grounding Rule: Reject if there is zero verified audit data or score
       if (prospect.leadScore === null && !prospect.audit?.score) {
         const err = new Error('No verified audit findings or diagnostic score available for this prospect');
         (err as unknown as { code: string }).code = 'NO_VERIFIED_FINDINGS';
@@ -411,36 +435,47 @@ export class PitchService {
         language: language || 'en',
       };
 
-      const result = await this.aiProvider.generatePitch(context);
+      let provider: AIProvider;
+      if (process.env.AI_PROVIDER === 'GEMINI') {
+        provider = new GeminiProvider('gemini-1.5-flash', process.env.GEMINI_API_KEY);
+      } else {
+        provider = this.aiProvider;
+      }
 
-      // Determine next version for prospect pitch history
-      const previousPitchesCount = await db.pitch.count({
-        where: { prospectId, organizationId },
-      });
-      const version = previousPitchesCount + 1;
+      const result = await provider.generatePitch(context);
 
-      const pitch = await db.pitch.create({
-        data: {
-          prospectId,
-          organizationId,
-          version,
-          generationType: result.generationType,
-          provider: result.provider,
-          model: result.model,
-          promptVersion: 'v1',
-          language: language || 'en',
-          tone: tone || 'PROFESSIONAL',
-          subject: result.subject,
-          opening: result.opening,
-          problem: result.problem,
-          businessImpact: result.businessImpact,
-          recommendation: result.recommendation,
-          callToAction: result.callToAction,
-          content: result.content,
-          claimReferences: result.claimReferences as object,
-          tokensUsed: result.tokensUsed,
-          estimatedCost: result.estimatedCost,
-        },
+      // Atomic Version Allocation in a Database Transaction to prevent race conditions
+      const pitch = await db.$transaction(async (tx) => {
+        const latestPitch = await tx.pitch.findFirst({
+          where: { prospectId, organizationId },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        const nextVersion = (latestPitch?.version ?? 0) + 1;
+
+        return tx.pitch.create({
+          data: {
+            prospectId,
+            organizationId,
+            version: nextVersion,
+            generationType: result.generationType,
+            provider: result.provider,
+            model: result.model,
+            promptVersion: 'v1',
+            language: language || 'en',
+            tone: tone || 'PROFESSIONAL',
+            subject: result.subject,
+            opening: result.opening,
+            problem: result.problem,
+            businessImpact: result.businessImpact,
+            recommendation: result.recommendation,
+            callToAction: result.callToAction,
+            content: result.content,
+            claimReferences: result.claimReferences as object,
+            tokensUsed: result.tokensUsed,
+            estimatedCost: result.estimatedCost,
+          },
+        });
       });
 
       await db.prospect.update({
@@ -472,11 +507,6 @@ export class PitchService {
   }
 
   async listPitches(organizationId: string, prospectId: string) {
-    const prospect = await db.prospect.findFirst({
-      where: { id: prospectId, organizationId },
-    });
-    if (!prospect) throw new Error('Prospect not found');
-
     return db.pitch.findMany({
       where: { prospectId, organizationId },
       orderBy: { version: 'desc' },

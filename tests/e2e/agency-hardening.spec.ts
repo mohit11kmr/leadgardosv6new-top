@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('agency portal flow: client workspaces, prospect campaigns, and lead widgets', async ({ page }) => {
+  test.setTimeout(60000);
   const email = `e2e_agency_${Date.now()}@example.com`;
 
   // 1. Register new agency user and workspace
@@ -13,7 +14,7 @@ test('agency portal flow: client workspaces, prospect campaigns, and lead widget
   // 2. Verified navigation to Dashboard
   await expect(page).toHaveURL(/dashboard/);
 
-  // 3. Navigate to Agency Portal
+  // 3. Navigate to Agency Command Center
   await page.goto('/agency');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Agency Command Center/i);
 

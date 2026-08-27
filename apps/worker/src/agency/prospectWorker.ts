@@ -30,6 +30,11 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
   let skippedCount = 0;
   let qualifiedCount = 0;
 
+  const criteria = (campaign.qualificationCriteria as any) || {};
+  const maxScoreCutoff = typeof criteria.maxLeadScore === 'number' ? criteria.maxLeadScore : 80;
+  const minCriticalRequired = typeof criteria.minCriticalFindings === 'number' ? criteria.minCriticalFindings : 1;
+  const minHighRequired = typeof criteria.minHighFindings === 'number' ? criteria.minHighFindings : 2;
+
   const crawler = new BoundedCrawler({
     maxPages: 1,
     maxDepth: 0,
@@ -41,7 +46,7 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
   const abortController = new AbortController();
 
   for (const prospect of campaign.prospects) {
-    // Check if campaign was paused or cancelled mid-execution
+    // Re-check live campaign status between prospects to allow immediate pause/cancellation
     const liveCampaign = await db.prospectCampaign.findUnique({
       where: { id: campaignId },
       select: { status: true },
@@ -67,7 +72,12 @@ export async function processProspectCampaignJob(job: Job<{ campaignId: string; 
 
         const scores = calculateScores(findings);
         const leadScore = scores.overall;
-        const isQualified = leadScore < 80 || criticalCount > 0 || highCount > 1;
+
+        // Configurable Qualification Policy
+        const isQualified =
+          leadScore < maxScoreCutoff ||
+          criticalCount >= minCriticalRequired ||
+          highCount >= minHighRequired;
 
         await db.prospect.update({
           where: { id: prospect.id },

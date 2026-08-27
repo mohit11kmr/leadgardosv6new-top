@@ -195,11 +195,11 @@ export class WidgetService {
       throw err;
     }
 
-    // 3. Strict Origin Validation (EXACT ORIGIN ONLY)
+    // 3. Strict Origin & Referer Validation Policy
     if (widget.allowedOrigins.length > 0) {
       if (!origin) {
-        const err = new Error('Origin header is required for this widget');
-        (err as unknown as { code: string }).code = 'ORIGIN_FORBIDDEN';
+        const err = new Error('Origin or valid Referer header is required for browser embeds');
+        (err as unknown as { code: string }).code = 'ORIGIN_REQUIRED';
         throw err;
       }
 

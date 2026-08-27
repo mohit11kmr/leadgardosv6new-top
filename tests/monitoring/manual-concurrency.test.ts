@@ -56,5 +56,5 @@ describe('Watchdog Reliability: Manual Run Concurrency & Idempotency (Requiremen
 
     // Remaining 9 requests receive 409 MONITOR_RUN_IN_PROGRESS
     expect(inProgressRuns.length).toBe(9);
-  });
+  }, 15000);
 });

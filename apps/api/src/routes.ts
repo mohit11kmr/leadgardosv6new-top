@@ -164,10 +164,10 @@ apiRouter.get('/public/widgets/:widgetId', async (request: Request, response: Re
         error: { code: error.code, message: error.message },
       });
     }
-    if (error.code === 'ORIGIN_FORBIDDEN') {
+    if (error.code === 'ORIGIN_FORBIDDEN' || error.code === 'ORIGIN_REQUIRED') {
       return response.status(403).json({
         success: false,
-        error: { code: 'ORIGIN_FORBIDDEN', message: error.message },
+        error: { code: error.code, message: error.message },
       });
     }
     if (error.code === 'WIDGET_RATE_LIMIT_EXCEEDED') {
@@ -1549,8 +1549,17 @@ apiRouter.post('/agency/prospect-campaigns', requirePermission('PROSPECT_MANAGE'
 
 apiRouter.get('/agency/prospect-campaigns', requirePermission('PROSPECT_VIEW'), async (request: AuthRequest, response, next) => {
   try {
-    const campaigns = await prospectService.listCampaigns(request.auth!.organizationId);
-    response.json({ success: true, data: campaigns });
+    const schema = z.object({
+      cursor: z.string().optional(),
+      limit: z.coerce.number().optional(),
+    });
+    const query = schema.parse(request.query);
+    const campaigns = await prospectService.listCampaigns(request.auth!.organizationId, query);
+    response.json({
+      success: true,
+      data: campaigns.items,
+      meta: { hasNextPage: campaigns.hasNextPage, nextCursor: campaigns.nextCursor },
+    });
   } catch (error) {
     next(error);
   }

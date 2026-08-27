@@ -1,7 +1,22 @@
 import { db } from '@leadguard/database';
+import { Redis } from 'ioredis';
+import { config } from '@leadguard/config';
+
+const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+const CACHE_TTL_SECONDS = 60;
 
 export class AgencyOverviewService {
   async getOverview(organizationId: string) {
+    const cacheKey = `agency:metrics:${organizationId}`;
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch {
+      // Redis cache read failure fallback to PostgreSQL
+    }
+
     const [
       clientCount,
       websiteCount,
@@ -27,7 +42,7 @@ export class AgencyOverviewService {
     // Conservative estimated value from qualified prospect pipeline & critical audit fixes
     const estimatedPipelineOpportunityInr = qualifiedProspectCount * 25000 + criticalFindingsCount * 5000;
 
-    return {
+    const data = {
       metrics: {
         clients: clientCount,
         websites: websiteCount,
@@ -41,6 +56,22 @@ export class AgencyOverviewService {
         estimatedPipelineOpportunityInr,
       },
     };
+
+    try {
+      await redis.set(cacheKey, JSON.stringify(data), 'EX', CACHE_TTL_SECONDS);
+    } catch {
+      // Ignore cache write failures
+    }
+
+    return data;
+  }
+
+  async invalidateMetricsCache(organizationId: string) {
+    try {
+      await redis.del(`agency:metrics:${organizationId}`);
+    } catch {
+      // Ignore
+    }
   }
 }
 
