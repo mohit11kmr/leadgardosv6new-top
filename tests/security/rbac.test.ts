@@ -10,6 +10,35 @@ describe('Security: RBAC Permission Matrix (Requirement 20, 23)', () => {
       data: { name: 'RBAC Org', slug: `rbac-org-${Date.now()}` },
     });
 
+    // Ensure PRO plan subscription so API access is permitted by entitlement
+    const proPlan = await db.plan.upsert({
+      where: { code: 'PRO' },
+      create: {
+        code: 'PRO',
+        name: 'Pro',
+        priceInPaise: 499900,
+        currency: 'INR',
+        entitlements: {
+          auditsPerMonth: 50,
+          websites: 5,
+          monitoring: true,
+          apiAccess: true,
+          whiteLabel: false,
+          reports: 50,
+          prospectLimit: 100,
+        },
+      },
+      update: {},
+    });
+
+    await db.subscription.create({
+      data: {
+        organizationId: org.id,
+        planId: proPlan.id,
+        status: 'ACTIVE',
+      },
+    });
+
     const website = await db.website.create({
       data: {
         organizationId: org.id,

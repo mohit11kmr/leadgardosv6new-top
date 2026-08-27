@@ -12,6 +12,7 @@ import { DashboardView } from '../features/dashboard/DashboardView.js';
 import { WebsiteListView, WebsiteDetailView } from '../features/websites/WebsiteViews.js';
 import { AuditListView } from '../features/audits/AuditListView.js';
 import { AuditDetailView } from '../features/audits/AuditDetailView.js';
+import { BillingView } from '../features/billing/BillingView.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
@@ -87,6 +88,14 @@ export function App() {
           element={
             <ProtectedRoute>
               <AuditDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing"
+          element={
+            <ProtectedRoute>
+              <BillingView />
             </ProtectedRoute>
           }
         />

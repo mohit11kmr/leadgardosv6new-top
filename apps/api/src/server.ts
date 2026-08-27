@@ -45,10 +45,10 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", 'https://checkout.razorpay.com'],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'", config.API_URL, config.APP_URL],
+        connectSrc: ["'self'", config.API_URL, config.APP_URL, 'https://api.razorpay.com', 'https://lumberjack.razorpay.com'],
         frameAncestors: ["'none'"],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: config.NODE_ENV === 'production' ? [] : null,
@@ -73,7 +73,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps or curl) or if origin is in whitelist
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -84,8 +83,16 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+// Preserve raw body buffer for Webhook signature verification (Requirement 14)
+app.use(
+  express.json({
+    limit: '2mb',
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: string }).rawBody = buf.toString();
+    },
+  })
+);
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // Global baseline API rate limiter
 app.use('/api/v1', apiLimiter);

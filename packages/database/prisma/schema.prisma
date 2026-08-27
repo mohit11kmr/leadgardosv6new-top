@@ -39,6 +39,52 @@ enum FindingScope {
   AUDIT
 }
 
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentPurpose {
+  SUBSCRIPTION
+  EXPRESS_FIX
+  WATCHDOG
+  PLAN_UPGRADE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+  ONE_TIME
+}
+
+enum UsageMetric {
+  AUDITS
+  WEBSITES
+  API_REQUESTS
+  MONITORING
+}
+
 model User {
   id                      String                   @id @default(uuid())
   email                   String                   @unique
@@ -129,6 +175,10 @@ model Organization {
   websites         Website[]
   audits           Audit[]
   subscriptions    Subscription[]
+  payments         Payment[]
+  invoices         Invoice[]
+  billingEvents    BillingEvent[]
+  usageRecords     UsageRecord[]
   apiKeys          ApiKey[]
   webhooks         WebhookEndpoint[]
   reports          Report[]
@@ -149,20 +199,20 @@ model OrganizationMember {
 }
 
 model Website {
-  id            String          @id @default(uuid())
+  id             String          @id @default(uuid())
   organizationId String
-  url           String
-  normalizedUrl String
-  domain        String
-  name          String
-  status        String          @default("ACTIVE")
-  deletedAt     DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domains       WebsiteDomain[]
-  settings      WebsiteSettings?
-  audits        Audit[]
+  url            String
+  normalizedUrl  String
+  domain         String
+  name           String
+  status         String          @default("ACTIVE")
+  deletedAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domains        WebsiteDomain[]
+  settings       WebsiteSettings?
+  audits         Audit[]
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
@@ -330,19 +380,106 @@ model MonitoringAlert {
 }
 
 model Plan {
-  id            String         @id @default(uuid())
-  code          String         @unique
-  name          String
-  subscriptions Subscription[]
+  id              String          @id @default(uuid())
+  code            String          @unique
+  name            String
+  description     String?
+  priceInPaise    Int             @default(0)
+  currency        String          @default("INR")
+  billingInterval BillingInterval @default(MONTHLY)
+  entitlements    Json
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  subscriptions   Subscription[]
 }
 
 model Subscription {
+  id                     String             @id @default(uuid())
+  organizationId         String
+  planId                 String
+  status                 SubscriptionStatus @default(ACTIVE)
+  provider               String             @default("RAZORPAY")
+  providerSubscriptionId String?            @unique
+  providerCustomerId     String?
+  currentPeriodStart     DateTime           @default(now())
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  canceledAt             DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  organization           Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan                   Plan               @relation(fields: [planId], references: [id])
+  payments               Payment[]
+
+  @@index([organizationId, status])
+}
+
+model Payment {
+  id                String         @id @default(uuid())
+  organizationId    String
+  subscriptionId    String?
+  provider          String         @default("RAZORPAY")
+  providerPaymentId String         @unique
+  providerOrderId   String?
+  providerSignature String?
+  amountInPaise     Int
+  currency          String         @default("INR")
+  status            PaymentStatus  @default(CAPTURED)
+  purpose           PaymentPurpose @default(SUBSCRIPTION)
+  metadata          Json?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription      Subscription?  @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  invoices          Invoice[]
+
+  @@index([organizationId, createdAt])
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  organizationId String
+  paymentId      String?
+  invoiceNumber  String        @unique
+  amountInPaise  Int
+  currency       String        @default("INR")
+  status         InvoiceStatus @default(PAID)
+  billingAddress Json?
+  taxInfo        Json?
+  pdfUrl         String?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payment        Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+}
+
+model BillingEvent {
+  id              String       @id @default(uuid())
+  organizationId  String
+  provider        String       @default("RAZORPAY")
+  providerEventId String?
+  type            String
+  data            Json?
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model UsageRecord {
   id             String       @id @default(uuid())
   organizationId String
-  planId         String
-  status         String
+  period         String
+  metric         UsageMetric
+  count          Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  plan           Plan         @relation(fields: [planId], references: [id])
+
+  @@unique([organizationId, period, metric])
+  @@index([organizationId, period])
 }
 
 model ApiKey {

@@ -21,6 +21,8 @@ import { auditQueue } from './queue.js';
 import { intelligenceService } from './services/intelligenceService.js';
 import { apiKeyService } from './services/apiKeyService.js';
 import { authSecurityService } from './services/authSecurityService.js';
+import { billingService } from './services/billingService.js';
+import { entitlementService } from './services/entitlementService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
 import { requirePermission } from './middleware/rbac.js';
 import {
@@ -28,6 +30,7 @@ import {
   passwordResetLimiter,
   emailVerificationLimiter,
   auditCreationLimiter,
+  webhookLimiter,
 } from './middleware/rateLimiters.js';
 
 const authSchema = z.object({
@@ -42,6 +45,7 @@ export type AuthRequest = Request & {
   auth?: Claims;
   params: Record<string, string>;
   cookies?: Record<string, string>;
+  rawBody?: string;
 };
 
 function getClientIp(req: Request): string {
@@ -76,6 +80,41 @@ function requestId(request: Request) {
 }
 
 export const apiRouter = Router();
+
+// --- Public Webhooks ---
+apiRouter.post('/webhooks/razorpay', webhookLimiter, async (request: AuthRequest, response, next) => {
+  try {
+    const signature = request.header('x-razorpay-signature');
+    if (!signature) {
+      return response.status(400).json({
+        success: false,
+        error: { code: 'MISSING_SIGNATURE', message: 'Razorpay webhook signature header missing' },
+      });
+    }
+
+    const rawBody = request.rawBody || JSON.stringify(request.body);
+    const result = await billingService.handleRazorpayWebhook(rawBody, signature, request.body);
+    response.status(200).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Invalid webhook signature')) {
+      return response.status(400).json({
+        success: false,
+        error: { code: 'INVALID_SIGNATURE', message: 'Webhook signature verification failed' },
+      });
+    }
+    next(error);
+  }
+});
+
+// --- Public Plans Catalog ---
+apiRouter.get('/billing/plans', async (_request, response, next) => {
+  try {
+    const plans = await billingService.listPlans();
+    response.json({ success: true, data: plans });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // --- Auth Routes ---
 apiRouter.post('/auth/register', authLimiter, async (request, response, next) => {
@@ -193,7 +232,6 @@ apiRouter.post('/auth/refresh', async (request, response, next) => {
     });
 
     if (reusedSession) {
-      // Possible token theft / replay attack: invalidate all user sessions
       await db.session.updateMany({
         where: { userId: reusedSession.userId, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -444,6 +482,127 @@ apiRouter.post('/organizations/:id/switch', async (request: AuthRequest, respons
   }
 });
 
+// --- Billing & Monetization Routes (RBAC: BILLING_VIEW / BILLING_MANAGE / SUBSCRIPTION_MANAGE) ---
+apiRouter.get('/billing', requirePermission('BILLING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const overview = await billingService.getBillingOverview(request.auth!.organizationId);
+    if (!overview) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Billing account not found', requestId: requestId(request) },
+      });
+    }
+    response.json({ success: true, data: overview });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/billing/entitlements', requirePermission('BILLING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const overview = await entitlementService.getEntitlementsOverview(request.auth!.organizationId);
+    response.json({ success: true, data: overview });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/billing/checkout/express-fix', requirePermission('BILLING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = z
+      .object({
+        websiteId: z.string().uuid(),
+        auditId: z.string().uuid().optional(),
+      })
+      .parse(request.body);
+
+    const order = await billingService.createExpressFixCheckout(
+      request.auth!.organizationId,
+      request.auth!.sub,
+      input.websiteId,
+      input.auditId
+    );
+    response.status(201).json({ success: true, data: order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/billing/checkout/express-fix/verify', requirePermission('BILLING_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = z
+      .object({
+        orderId: z.string().min(5),
+        paymentId: z.string().min(5),
+        signature: z.string().min(10),
+        websiteId: z.string().uuid(),
+        auditId: z.string().uuid().optional(),
+      })
+      .parse(request.body);
+
+    const result = await billingService.verifyExpressFixPayment(
+      request.auth!.organizationId,
+      request.auth!.sub,
+      input
+    );
+    response.status(200).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/billing/checkout/subscription', requirePermission('SUBSCRIPTION_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = z.object({ planCode: z.string().min(2) }).parse(request.body);
+    const result = await billingService.createSubscriptionCheckout(
+      request.auth!.organizationId,
+      request.auth!.sub,
+      input.planCode
+    );
+    response.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/billing/subscription/cancel', requirePermission('SUBSCRIPTION_MANAGE'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await billingService.cancelSubscription(
+      request.auth!.organizationId,
+      request.auth!.sub
+    );
+    response.status(200).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/billing/payments', requirePermission('BILLING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const payments = await db.payment.findMany({
+      where: { organizationId: request.auth!.organizationId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    response.json({ success: true, data: payments });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/billing/invoices', requirePermission('BILLING_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const invoices = await db.invoice.findMany({
+      where: { organizationId: request.auth!.organizationId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    response.json({ success: true, data: invoices });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // --- API Key Management (RBAC: API_KEY_MANAGE) ---
 apiRouter.get('/api-keys', requirePermission('API_KEY_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
@@ -456,6 +615,14 @@ apiRouter.get('/api-keys', requirePermission('API_KEY_MANAGE'), async (request: 
 
 apiRouter.post('/api-keys', requirePermission('API_KEY_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
+    const canUse = await entitlementService.canUseApiKeys(request.auth!.organizationId);
+    if (!canUse.allowed) {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: canUse.reason, requestId: requestId(request) },
+      });
+    }
+
     const input = z.object({ name: z.string().min(2).max(60), scopes: z.array(z.string()).optional() }).parse(request.body);
     const res = await apiKeyService.createApiKey(
       request.auth!.organizationId,
@@ -506,6 +673,14 @@ apiRouter.get('/websites', requirePermission('WEBSITE_VIEW'), async (request: Au
 
 apiRouter.post('/websites', requirePermission('WEBSITE_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
+    const canAdd = await entitlementService.canAddWebsite(request.auth!.organizationId);
+    if (!canAdd.allowed) {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: canAdd.reason, requestId: requestId(request) },
+      });
+    }
+
     const input = websiteSchema.parse(request.body);
     const url = await validateExternalUrl(input.url);
     const normalizedUrl = url.toString().replace(/\/$/, '');
@@ -518,6 +693,8 @@ apiRouter.post('/websites', requirePermission('WEBSITE_MANAGE'), async (request:
         domain: url.hostname,
       },
     });
+
+    await entitlementService.recordUsage(request.auth!.organizationId, 'WEBSITES');
     response.status(201).json({ success: true, data: toWebsiteDto(website) });
   } catch (error) {
     next(error);
@@ -597,6 +774,14 @@ apiRouter.patch('/websites/:id', requirePermission('WEBSITE_MANAGE'), async (req
 // --- Audit Execution & Results Routes (RBAC: AUDIT_VIEW / AUDIT_RUN / AUDIT_CANCEL) ---
 apiRouter.post('/audits', requirePermission('AUDIT_RUN'), auditCreationLimiter, async (request: AuthRequest, response, next) => {
   try {
+    const canRun = await entitlementService.canRunAudit(request.auth!.organizationId);
+    if (!canRun.allowed) {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: canRun.reason, requestId: requestId(request) },
+      });
+    }
+
     const input = z
       .object({
         websiteId: z.string().uuid(),
@@ -646,6 +831,7 @@ apiRouter.post('/audits', requirePermission('AUDIT_RUN'), auditCreationLimiter, 
       return response.status(200).json({ success: true, data: audit, meta: { idempotent: true } });
     }
 
+    await entitlementService.recordUsage(request.auth!.organizationId, 'AUDITS');
     await auditQueue.add('audit:create', { auditId: audit.id }, { jobId: audit.id });
     response.status(202).json({ success: true, data: audit });
   } catch (error) {
