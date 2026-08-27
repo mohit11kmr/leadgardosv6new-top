@@ -620,6 +620,8 @@ apiRouter.post('/monitoring', requirePermission('MONITORING_MANAGE'), async (req
       .object({
         websiteId: z.string().uuid(),
         frequency: z.enum(['FIVE_MINUTES', 'FIFTEEN_MINUTES', 'HOURLY', 'DAILY']).optional(),
+        maxPages: z.number().int().min(1).max(50).optional(),
+        maxDepth: z.number().int().min(0).max(5).optional(),
         healthChecks: z.record(z.unknown()).optional(),
         alertPolicy: z.record(z.unknown()).optional(),
       })
@@ -668,6 +670,8 @@ apiRouter.patch('/monitoring/:id', requirePermission('MONITORING_MANAGE'), async
       .object({
         enabled: z.boolean().optional(),
         frequency: z.enum(['FIVE_MINUTES', 'FIFTEEN_MINUTES', 'HOURLY', 'DAILY']).optional(),
+        maxPages: z.number().int().min(1).max(50).optional(),
+        maxDepth: z.number().int().min(0).max(5).optional(),
         healthChecks: z.record(z.unknown()).optional(),
         alertPolicy: z.record(z.unknown()).optional(),
       })
@@ -676,6 +680,12 @@ apiRouter.patch('/monitoring/:id', requirePermission('MONITORING_MANAGE'), async
     const updated = await monitoringService.updateMonitor(request.auth!.organizationId, request.params.id, input);
     response.json({ success: true, data: updated });
   } catch (error) {
+    if (error instanceof Error && (error as { code?: string }).code === 'PLAN_LIMIT_REACHED') {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'PLAN_LIMIT_REACHED', message: error.message, requestId: requestId(request) },
+      });
+    }
     next(error);
   }
 });
@@ -691,8 +701,10 @@ apiRouter.delete('/monitoring/:id', requirePermission('MONITORING_MANAGE'), asyn
 
 apiRouter.get('/monitoring/:id/runs', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
   try {
-    const runs = await monitoringService.getRuns(request.auth!.organizationId, request.params.id);
-    response.json({ success: true, data: runs });
+    const cursor = typeof request.query.cursor === 'string' ? request.query.cursor : undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const runs = await monitoringService.getRuns(request.auth!.organizationId, request.params.id, { cursor, limit });
+    response.json({ success: true, data: runs.items, meta: { hasNextPage: runs.hasNextPage, nextCursor: runs.nextCursor } });
   } catch (error) {
     next(error);
   }
@@ -700,8 +712,10 @@ apiRouter.get('/monitoring/:id/runs', requirePermission('MONITORING_VIEW'), asyn
 
 apiRouter.get('/monitoring/:id/findings', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
   try {
-    const findings = await monitoringService.getFindings(request.auth!.organizationId, request.params.id);
-    response.json({ success: true, data: findings });
+    const cursor = typeof request.query.cursor === 'string' ? request.query.cursor : undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const findings = await monitoringService.getFindings(request.auth!.organizationId, request.params.id, { cursor, limit });
+    response.json({ success: true, data: findings.items, meta: { hasNextPage: findings.hasNextPage, nextCursor: findings.nextCursor } });
   } catch (error) {
     next(error);
   }
@@ -709,8 +723,10 @@ apiRouter.get('/monitoring/:id/findings', requirePermission('MONITORING_VIEW'), 
 
 apiRouter.get('/monitoring/:id/alerts', requirePermission('MONITORING_VIEW'), async (request: AuthRequest, response, next) => {
   try {
-    const alerts = await monitoringService.getAlerts(request.auth!.organizationId, request.params.id);
-    response.json({ success: true, data: alerts });
+    const cursor = typeof request.query.cursor === 'string' ? request.query.cursor : undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const alerts = await monitoringService.getAlerts(request.auth!.organizationId, request.params.id, { cursor, limit });
+    response.json({ success: true, data: alerts.items, meta: { hasNextPage: alerts.hasNextPage, nextCursor: alerts.nextCursor } });
   } catch (error) {
     next(error);
   }
@@ -718,7 +734,11 @@ apiRouter.get('/monitoring/:id/alerts', requirePermission('MONITORING_VIEW'), as
 
 apiRouter.post('/monitoring/:id/alerts/:alertId/ack', requirePermission('MONITORING_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const acked = await monitoringService.acknowledgeAlert(request.auth!.organizationId, request.params.alertId);
+    const acked = await monitoringService.acknowledgeAlert(
+      request.auth!.organizationId,
+      request.params.id,
+      request.params.alertId
+    );
     response.json({ success: true, data: acked });
   } catch (error) {
     next(error);

@@ -1,5 +1,6 @@
 import { db } from '@leadguard/database';
 import type { PageRecord } from '@leadguard/shared';
+import { BoundedCrawler } from '../audit/crawler.js';
 import { performHealthCheck } from './healthChecker.js';
 import { regressionEngine } from './regressionEngine.js';
 import { alertEngine } from './alertEngine.js';
@@ -8,6 +9,7 @@ import type { BaselineSnapshot } from './types.js';
 export interface MonitoringJobData {
   monitoringConfigId: string;
   triggeredBy?: 'SCHEDULER' | 'MANUAL';
+  scheduledSlot?: string;
 }
 
 export function computeNextRun(frequency: string, baseDate = new Date()): Date {
@@ -29,7 +31,7 @@ export function computeNextRun(frequency: string, baseDate = new Date()): Date {
 export async function processMonitoringJob(
   data: MonitoringJobData,
   signal: AbortSignal
-): Promise<{ runId: string; status: string; findingCount: number }> {
+): Promise<{ runId: string; status: string; findingCount: number; pagesEvaluated: number }> {
   const startedAt = Date.now();
 
   // 1. Fetch monitor config & website
@@ -38,47 +40,92 @@ export async function processMonitoringJob(
     include: { website: true },
   });
 
-  if (!config.enabled && data.triggeredBy !== 'MANUAL') {
-    return { runId: '', status: 'SKIPPED', findingCount: 0 };
+  if ((!config.enabled || config.archivedAt) && data.triggeredBy !== 'MANUAL') {
+    return { runId: '', status: 'SKIPPED', findingCount: 0, pagesEvaluated: 0 };
   }
 
-  // 2. Create MonitoringRun record
+  // 2. Check Run Idempotency (For scheduled slots)
+  if (data.scheduledSlot) {
+    const existingRun = await db.monitoringRun.findUnique({
+      where: {
+        monitoringConfigId_scheduledSlot: {
+          monitoringConfigId: config.id,
+          scheduledSlot: data.scheduledSlot,
+        },
+      },
+    });
+    if (existingRun) {
+      return {
+        runId: existingRun.id,
+        status: 'SKIPPED_DUPLICATE',
+        findingCount: existingRun.findingsCount,
+        pagesEvaluated: existingRun.pagesEvaluated,
+      };
+    }
+  }
+
+  // 3. Create MonitoringRun record
   const run = await db.monitoringRun.create({
     data: {
       monitoringConfigId: config.id,
       websiteId: config.websiteId,
       organizationId: config.organizationId,
+      scheduledSlot: data.scheduledSlot || null,
       status: 'RUNNING',
       startedAt: new Date(),
     },
   });
 
   try {
-    // 3. Perform Health Check
+    // 4. Perform Health Check on Root URL
     const health = await performHealthCheck(config.website.url, signal);
 
-    // 4. Perform Regression Analysis
-    const previousBaseline = config.baseline as unknown as BaselineSnapshot | null;
-    const pageRecord: PageRecord = {
-      url: config.website.url,
-      finalUrl: config.website.url,
-      statusCode: health.httpStatus || (health.isAvailable ? 200 : 500),
-      html: health.html || '',
-      htmlAvailable: Boolean(health.html),
-      headers: {},
-      depth: 0,
-      responseTimeMs: health.responseTimeMs,
-      redirectChain: health.redirectChain,
-      contentType: health.contentType || 'text/html',
-    };
+    // 5. Multi-Page Crawl if Available
+    const pages: PageRecord[] = [];
+    if (health.isAvailable) {
+      const crawler = new BoundedCrawler({
+        maxPages: config.maxPages || 10,
+        maxDepth: config.maxDepth || 2,
+        concurrencyLimit: 3,
+        perRequestTimeoutMs: 8000,
+        globalTimeoutMs: 30000,
+      });
 
+      const crawlResult = await crawler.crawl(config.website.url, signal);
+      pages.push(...Array.from(crawlResult.pages.values()));
+    } else {
+      // Fallback single failed page
+      pages.push({
+        url: config.website.url,
+        finalUrl: config.website.url,
+        statusCode: health.httpStatus || 500,
+        html: health.html || '',
+        htmlAvailable: Boolean(health.html),
+        headers: {},
+        depth: 0,
+        responseTimeMs: health.responseTimeMs,
+        redirectChain: health.redirectChain,
+        contentType: health.contentType || 'text/html',
+      });
+    }
+
+    // 6. Evaluate Baseline & Regressions
+    const previousBaseline = config.baseline as unknown as BaselineSnapshot | null;
     const evaluation = await regressionEngine.evaluate(
       config.websiteId,
-      pageRecord,
+      pages,
       previousBaseline
     );
 
-    // 5. Persist Findings
+    // 7. Track Consecutive Failure State
+    let newConsecutiveFailures = config.consecutiveFailures;
+    if (!health.isAvailable) {
+      newConsecutiveFailures += 1;
+    } else {
+      newConsecutiveFailures = 0;
+    }
+
+    // 8. Persist Findings
     if (evaluation.regressions.length > 0) {
       await db.monitoringFinding.createMany({
         data: evaluation.regressions.map((reg) => ({
@@ -92,6 +139,8 @@ export async function processMonitoringJob(
           changeType: reg.changeType,
           title: reg.title,
           description: reg.description,
+          affectedUrl: reg.affectedUrl || null,
+          pageTitle: reg.pageTitle || null,
           beforeState: reg.beforeState as object,
           afterState: reg.afterState as object,
           evidence: reg.evidence as object,
@@ -99,7 +148,7 @@ export async function processMonitoringJob(
       });
     }
 
-    // 6. Process Alerts
+    // 9. Process Alerts (With consecutive failure threshold & performance threshold)
     await alertEngine.processAlerts({
       organizationId: config.organizationId,
       websiteId: config.websiteId,
@@ -108,23 +157,37 @@ export async function processMonitoringJob(
       regressions: evaluation.regressions,
       policy: config.alertPolicy as object,
       isAvailable: health.isAvailable,
+      consecutiveFailures: newConsecutiveFailures,
+      failureThreshold: config.failureThreshold || 2,
+      responseTimeMs: health.responseTimeMs,
+      responseTimeThresholdMs: config.responseTimeThresholdMs || 3000,
+      tlsValid: health.tlsValid,
+      tlsExpiresAt: health.tlsExpiresAt,
+      tlsExpiryThresholdDays: config.tlsExpiryThresholdDays || 14,
       error: health.error,
     });
 
     const durationMs = Date.now() - startedAt;
     const nextRunAt = computeNextRun(config.frequency);
 
-    // 7. Update Baseline & Schedule in Config
+    // 10. Baseline Preservation Policy:
+    // Only overwrite baseline if current run was healthy. A transient outage must NOT erase a good baseline!
+    const baselineToPersist = health.isAvailable
+      ? (evaluation.updatedBaseline as object)
+      : (config.baseline as object) || (evaluation.updatedBaseline as object);
+
     await db.monitoringConfig.update({
       where: { id: config.id },
       data: {
-        baseline: evaluation.updatedBaseline as object,
+        baseline: baselineToPersist,
+        consecutiveFailures: newConsecutiveFailures,
         lastRunAt: new Date(),
         nextRunAt,
+        lockedUntil: null,
       },
     });
 
-    // 8. Finalize MonitoringRun
+    // 11. Finalize MonitoringRun
     await db.monitoringRun.update({
       where: { id: run.id },
       data: {
@@ -136,6 +199,7 @@ export async function processMonitoringJob(
         redirectChain: health.redirectChain,
         scores: evaluation.scores,
         scoreDeltas: evaluation.scoreDeltas,
+        pagesEvaluated: pages.length,
         findingsCount: evaluation.regressions.length,
         newRegressionsCount: evaluation.newRegressionsCount,
         resolvedCount: evaluation.resolvedCount,
@@ -149,6 +213,7 @@ export async function processMonitoringJob(
       runId: run.id,
       status: health.isAvailable ? 'COMPLETED' : 'PARTIAL',
       findingCount: evaluation.regressions.length,
+      pagesEvaluated: pages.length,
     };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
@@ -161,6 +226,14 @@ export async function processMonitoringJob(
         errorCode: errorMsg,
         completedAt: new Date(),
         durationMs,
+      },
+    });
+
+    await db.monitoringConfig.update({
+      where: { id: config.id },
+      data: {
+        consecutiveFailures: { increment: 1 },
+        lockedUntil: null,
       },
     });
 

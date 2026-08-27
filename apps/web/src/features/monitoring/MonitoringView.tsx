@@ -21,6 +21,7 @@ export function MonitoringView() {
   const [selectedFrequency, setSelectedFrequency] = useState<
     'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY'
   >('HOURLY');
+  const [maxPages, setMaxPages] = useState(10);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const {
@@ -42,10 +43,11 @@ export function MonitoringView() {
       createMonitor({
         websiteId: selectedWebsiteId,
         frequency: selectedFrequency,
+        maxPages,
       }),
     onSuccess: () => {
       setEnrollModalOpen(false);
-      setActionMessage('Website enrolled in Watchdog 24/7 continuous monitoring.');
+      setActionMessage('Website enrolled in Watchdog continuous multi-page monitoring.');
       queryClient.invalidateQueries({ queryKey: ['monitors-list'] });
     },
     onError: (err: unknown) => {
@@ -55,8 +57,8 @@ export function MonitoringView() {
 
   const manualRunMutation = useMutation({
     mutationFn: (id: string) => triggerManualRun(id),
-    onSuccess: () => {
-      setActionMessage('Watchdog monitoring scan enqueued.');
+    onSuccess: (data) => {
+      setActionMessage(data.message || 'Watchdog monitoring scan enqueued.');
       queryClient.invalidateQueries({ queryKey: ['monitors-list'] });
     },
   });
@@ -79,7 +81,7 @@ export function MonitoringView() {
     );
   }
 
-  const activeMonitors = (monitors || []).filter((m) => m.enabled);
+  const activeMonitors = (monitors || []).filter((m) => m.enabled && !m.archivedAt);
   const openAlertsCount = (monitors || []).reduce(
     (acc, m) => acc + (m.alerts?.length || 0),
     0
@@ -90,7 +92,7 @@ export function MonitoringView() {
       <div className="pageHeader">
         <div>
           <h1>Watchdog Continuous Monitoring</h1>
-          <p>Autonomous 24/7 lead leak detection, health checks, and change monitoring.</p>
+          <p>Autonomous 24/7 multi-page lead leak detection, health checks, and change monitoring.</p>
         </div>
         <div>
           <Button variant="primary" onClick={() => setEnrollModalOpen(true)}>
@@ -110,23 +112,23 @@ export function MonitoringView() {
         <Card>
           <span className="metricLabel">Active Monitors</span>
           <div className="metricValue mt2">{activeMonitors.length}</div>
-          <p className="textMuted textSm mt1">Enrolled targets</p>
+          <p className="textMuted textSm mt1">Bounded multi-page targets</p>
         </Card>
 
         <Card>
           <span className="metricLabel">Health Status</span>
           <div className="metricValue mt2">
             <Badge variant={openAlertsCount === 0 ? 'success' : 'critical'}>
-              {openAlertsCount === 0 ? 'All Systems Healthy' : `${openAlertsCount} Active Alert(s)`}
+              {openAlertsCount === 0 ? 'All Systems Healthy' : `${openAlertsCount} Active Incident(s)`}
             </Badge>
           </div>
           <p className="textMuted textSm mt1">Automated regression tracking</p>
         </Card>
 
         <Card>
-          <span className="metricLabel">Monitoring Interval</span>
-          <div className="metricValue mt2">24/7</div>
-          <p className="textMuted textSm mt1">Automated BullMQ scheduler</p>
+          <span className="metricLabel">Distributed Scheduler</span>
+          <div className="metricValue mt2">Atomic Lock</div>
+          <p className="textMuted textSm mt1">Zero duplicate execution guarantee</p>
         </Card>
       </div>
 
@@ -159,6 +161,7 @@ export function MonitoringView() {
                   </div>
                   <div className="badgeRow">
                     <Badge variant="neutral">{mon.frequency.replace('_', ' ')}</Badge>
+                    <Badge variant="neutral">{mon.maxPages || 10} Pages</Badge>
                     <Badge variant={openAlerts === 0 ? 'success' : 'critical'}>
                       {openAlerts === 0 ? 'HEALTHY' : `${openAlerts} ALERT(S)`}
                     </Badge>
@@ -171,15 +174,13 @@ export function MonitoringView() {
                     <div className="textLg fontBold mt1">{score > 0 ? `${score}/100` : '—'}</div>
                   </div>
                   <div>
+                    <span className="textMuted textSm">Pages Monitored</span>
+                    <div className="textSm mt1">{latestRun?.pagesEvaluated ?? 1} pages</div>
+                  </div>
+                  <div>
                     <span className="textMuted textSm">Last Checked</span>
                     <div className="textSm mt1">
                       {mon.lastRunAt ? new Date(mon.lastRunAt).toLocaleTimeString() : 'Pending'}
-                    </div>
-                  </div>
-                  <div>
-                    <span className="textMuted textSm">Next Run</span>
-                    <div className="textSm mt1">
-                      {mon.nextRunAt ? new Date(mon.nextRunAt).toLocaleTimeString() : 'Scheduled'}
                     </div>
                   </div>
                   <div>
@@ -215,7 +216,7 @@ export function MonitoringView() {
       {enrollModalOpen && (
         <Modal
           isOpen={enrollModalOpen}
-          title="Enroll Website in Watchdog 24/7"
+          title="Enroll Website in Watchdog Continuous Monitoring"
           onClose={() => setEnrollModalOpen(false)}
         >
           <div className="formGroup mb3">
@@ -235,7 +236,7 @@ export function MonitoringView() {
             </select>
           </div>
 
-          <div className="formGroup mb4">
+          <div className="formGroup mb3">
             <label htmlFor="frequencySelect">Monitoring Frequency</label>
             <select
               id="frequencySelect"
@@ -243,10 +244,24 @@ export function MonitoringView() {
               value={selectedFrequency}
               onChange={(e) => setSelectedFrequency(e.target.value as any)}
             >
-              <option value="HOURLY">Hourly (Recommended)</option>
-              <option value="FIFTEEN_MINUTES">Every 15 Minutes</option>
-              <option value="FIVE_MINUTES">Every 5 Minutes (High Priority)</option>
+              <option value="HOURLY">Hourly (Recommended for Pro)</option>
+              <option value="FIFTEEN_MINUTES">Every 15 Minutes (Pro / Agency)</option>
+              <option value="FIVE_MINUTES">Every 5 Minutes (Agency High Priority)</option>
               <option value="DAILY">Daily</option>
+            </select>
+          </div>
+
+          <div className="formGroup mb4">
+            <label htmlFor="maxPagesSelect">Crawl Page Depth & Limit</label>
+            <select
+              id="maxPagesSelect"
+              className="formControl"
+              value={maxPages}
+              onChange={(e) => setMaxPages(Number(e.target.value))}
+            >
+              <option value={5}>5 Bounded Pages</option>
+              <option value={10}>10 Bounded Pages (Standard)</option>
+              <option value={25}>25 Bounded Pages (Deep)</option>
             </select>
           </div>
 

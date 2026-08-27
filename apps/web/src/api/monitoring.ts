@@ -1,16 +1,29 @@
 import { apiClient } from './client.js';
 
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: {
+    hasNextPage: boolean;
+    nextCursor: string | null;
+  };
+}
+
 export interface MonitoringConfig {
   id: string;
   organizationId: string;
   websiteId: string;
   enabled: boolean;
   frequency: 'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY';
+  maxPages?: number;
+  maxDepth?: number;
+  consecutiveFailures?: number;
+  failureThreshold?: number;
   healthChecks: Record<string, unknown> | null;
   alertPolicy: Record<string, unknown> | null;
   baseline: Record<string, unknown> | null;
   lastRunAt: string | null;
   nextRunAt: string | null;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
   website: {
@@ -28,6 +41,7 @@ export interface MonitoringRun {
   id: string;
   monitoringConfigId: string;
   websiteId: string;
+  scheduledSlot?: string | null;
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'SKIPPED';
   httpStatus: number | null;
   responseTimeMs: number | null;
@@ -46,6 +60,7 @@ export interface MonitoringRun {
     security: number;
     overall: number;
   } | null;
+  pagesEvaluated: number;
   findingsCount: number;
   newRegressionsCount: number;
   resolvedCount: number;
@@ -64,6 +79,8 @@ export interface MonitoringFinding {
   changeType: 'NEW' | 'RESOLVED' | 'PERSISTING' | 'REGRESSED' | 'UNCHANGED';
   title: string;
   description: string;
+  affectedUrl?: string | null;
+  pageTitle?: string | null;
   beforeState: Record<string, unknown> | null;
   afterState: Record<string, unknown> | null;
   evidence: Record<string, unknown> | null;
@@ -94,6 +111,8 @@ export async function getMonitor(id: string): Promise<MonitoringConfig> {
 export async function createMonitor(input: {
   websiteId: string;
   frequency?: 'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY';
+  maxPages?: number;
+  maxDepth?: number;
 }): Promise<MonitoringConfig> {
   return apiClient<MonitoringConfig>('/monitoring', {
     method: 'POST',
@@ -106,6 +125,8 @@ export async function updateMonitor(
   input: {
     enabled?: boolean;
     frequency?: 'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY';
+    maxPages?: number;
+    maxDepth?: number;
   }
 ): Promise<MonitoringConfig> {
   return apiClient<MonitoringConfig>(`/monitoring/${id}`, {
@@ -120,16 +141,37 @@ export async function deleteMonitor(id: string): Promise<void> {
   });
 }
 
-export async function getMonitorRuns(id: string): Promise<MonitoringRun[]> {
-  return apiClient<MonitoringRun[]>(`/monitoring/${id}/runs`);
+export async function getMonitorRuns(
+  id: string,
+  params?: { cursor?: string; limit?: number }
+): Promise<PaginatedResponse<MonitoringRun>> {
+  const query = new URLSearchParams();
+  if (params?.cursor) query.set('cursor', params.cursor);
+  if (params?.limit) query.set('limit', String(params.limit));
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  return apiClient<PaginatedResponse<MonitoringRun>>(`/monitoring/${id}/runs${queryString}`);
 }
 
-export async function getMonitorFindings(id: string): Promise<MonitoringFinding[]> {
-  return apiClient<MonitoringFinding[]>(`/monitoring/${id}/findings`);
+export async function getMonitorFindings(
+  id: string,
+  params?: { cursor?: string; limit?: number }
+): Promise<PaginatedResponse<MonitoringFinding>> {
+  const query = new URLSearchParams();
+  if (params?.cursor) query.set('cursor', params.cursor);
+  if (params?.limit) query.set('limit', String(params.limit));
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  return apiClient<PaginatedResponse<MonitoringFinding>>(`/monitoring/${id}/findings${queryString}`);
 }
 
-export async function getMonitorAlerts(id: string): Promise<MonitoringAlert[]> {
-  return apiClient<MonitoringAlert[]>(`/monitoring/${id}/alerts`);
+export async function getMonitorAlerts(
+  id: string,
+  params?: { cursor?: string; limit?: number }
+): Promise<PaginatedResponse<MonitoringAlert>> {
+  const query = new URLSearchParams();
+  if (params?.cursor) query.set('cursor', params.cursor);
+  if (params?.limit) query.set('limit', String(params.limit));
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  return apiClient<PaginatedResponse<MonitoringAlert>>(`/monitoring/${id}/alerts${queryString}`);
 }
 
 export async function acknowledgeAlert(monitorId: string, alertId: string): Promise<MonitoringAlert> {
@@ -138,8 +180,8 @@ export async function acknowledgeAlert(monitorId: string, alertId: string): Prom
   });
 }
 
-export async function triggerManualRun(id: string): Promise<{ enqueued: boolean; jobId: string }> {
-  return apiClient<{ enqueued: boolean; jobId: string }>(`/monitoring/${id}/run`, {
+export async function triggerManualRun(id: string): Promise<{ enqueued: boolean; jobId?: string; runId?: string; message?: string }> {
+  return apiClient<{ enqueued: boolean; jobId?: string; runId?: string; message?: string }>(`/monitoring/${id}/run`, {
     method: 'POST',
   });
 }

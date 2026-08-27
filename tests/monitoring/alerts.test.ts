@@ -21,6 +21,7 @@ describe('Watchdog Monitoring: Alert Deduplication & Lifecycle (Requirement 19, 
         organizationId: org.id,
         websiteId: website.id,
         frequency: 'HOURLY',
+        failureThreshold: 2,
       },
     });
     const run = await db.monitoringRun.create({
@@ -32,7 +33,7 @@ describe('Watchdog Monitoring: Alert Deduplication & Lifecycle (Requirement 19, 
       },
     });
 
-    // 1. Initial Outage -> Creates OPEN alert
+    // 1. Outage with consecutiveFailures >= 2 -> Creates OPEN alert
     const alerts1 = await alertEngine.processAlerts({
       organizationId: org.id,
       websiteId: website.id,
@@ -40,6 +41,13 @@ describe('Watchdog Monitoring: Alert Deduplication & Lifecycle (Requirement 19, 
       monitoringRunId: run.id,
       regressions: [],
       isAvailable: false,
+      consecutiveFailures: 2,
+      failureThreshold: 2,
+      responseTimeMs: 0,
+      responseTimeThresholdMs: 3000,
+      tlsValid: false,
+      tlsExpiresAt: null,
+      tlsExpiryThresholdDays: 14,
       error: 'HTTP_500',
     });
 
@@ -55,6 +63,13 @@ describe('Watchdog Monitoring: Alert Deduplication & Lifecycle (Requirement 19, 
       monitoringRunId: run.id,
       regressions: [],
       isAvailable: false,
+      consecutiveFailures: 3,
+      failureThreshold: 2,
+      responseTimeMs: 0,
+      responseTimeThresholdMs: 3000,
+      tlsValid: false,
+      tlsExpiresAt: null,
+      tlsExpiryThresholdDays: 14,
       error: 'HTTP_500',
     });
 
@@ -68,6 +83,13 @@ describe('Watchdog Monitoring: Alert Deduplication & Lifecycle (Requirement 19, 
       monitoringRunId: run.id,
       regressions: [],
       isAvailable: true,
+      consecutiveFailures: 0,
+      failureThreshold: 2,
+      responseTimeMs: 150,
+      responseTimeThresholdMs: 3000,
+      tlsValid: true,
+      tlsExpiresAt: null,
+      tlsExpiryThresholdDays: 14,
     });
 
     const activeAlerts = await db.monitoringAlert.findMany({

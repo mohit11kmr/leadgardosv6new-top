@@ -30,8 +30,8 @@ export function MonitorDetailView() {
 
   const runMutation = useMutation({
     mutationFn: () => triggerManualRun(id!),
-    onSuccess: () => {
-      setActionMessage('Watchdog monitoring scan triggered.');
+    onSuccess: (data) => {
+      setActionMessage(data.message || 'Watchdog monitoring scan triggered.');
       queryClient.invalidateQueries({ queryKey: ['monitor-detail', id] });
     },
   });
@@ -39,7 +39,7 @@ export function MonitorDetailView() {
   const ackMutation = useMutation({
     mutationFn: (alertId: string) => acknowledgeAlert(id!, alertId),
     onSuccess: () => {
-      setActionMessage('Alert acknowledged.');
+      setActionMessage('Incident acknowledged.');
       queryClient.invalidateQueries({ queryKey: ['monitor-detail', id] });
     },
   });
@@ -77,7 +77,7 @@ export function MonitorDetailView() {
             ← Back to Monitoring Dashboard
           </Link>
           <h1>{monitor.website.name}</h1>
-          <p className="textMuted">{monitor.website.url}</p>
+          <p className="textMuted">{monitor.website.url} — Bounded Multi-Page ({monitor.maxPages || 10} Pages)</p>
         </div>
         <div className="btnGroup">
           <Button
@@ -85,7 +85,7 @@ export function MonitorDetailView() {
             isLoading={runMutation.isPending}
             onClick={() => runMutation.mutate()}
           >
-            ⚡ Run Diagnostic Scan Now
+            ⚡ Run Multi-Page Diagnostic Scan
           </Button>
         </div>
       </div>
@@ -121,34 +121,36 @@ export function MonitorDetailView() {
           <div className="metricValue mt2">
             {latestRun?.responseTimeMs ? `${latestRun.responseTimeMs} ms` : '—'}
           </div>
-          <p className="textSm mt1">TLS Certificate: {latestRun?.tlsValid ? 'Valid' : 'Expired/Invalid'}</p>
+          <p className="textSm mt1">
+            TLS: {latestRun?.tlsValid ? 'Valid' : 'Expired/Invalid'} | Pages: {latestRun?.pagesEvaluated ?? 1}
+          </p>
         </Card>
 
         <Card>
           <div className="cardHeaderFlex">
             <span className="metricLabel">Pillar Health</span>
-            <Badge variant="neutral">Diagnostic Scan</Badge>
+            <Badge variant="neutral">Diagnostic Engine</Badge>
           </div>
           <div className="pillarHealthList mt2">
-            <div className="textSm">Lead: <strong>{scores.lead}/100</strong></div>
-            <div className="textSm">Ads: <strong>{scores.advertising}/100</strong></div>
-            <div className="textSm">SEO: <strong>{scores.seo}/100</strong></div>
-            <div className="textSm">Security: <strong>{scores.security}/100</strong></div>
+            <div className="textSm">Lead Conversion: <strong>{scores.lead}/100</strong></div>
+            <div className="textSm">Ad Readiness: <strong>{scores.advertising}/100</strong></div>
+            <div className="textSm">SEO & Visibility: <strong>{scores.seo}/100</strong></div>
+            <div className="textSm">Security & Trust: <strong>{scores.security}/100</strong></div>
           </div>
         </Card>
       </div>
 
       {/* Active Alerts */}
-      <h2 className="mb3">Active & Historical Alerts</h2>
+      <h2 className="mb3">Active & Historical Incidents</h2>
       <Card className="tableCard mb4">
         {(!monitor.alerts || monitor.alerts.length === 0) ? (
-          <div className="emptyState">No active alerts detected. All monitoring checks passing.</div>
+          <div className="emptyState">No active incidents detected. All monitoring checks passing.</div>
         ) : (
           <table className="dataTable">
             <thead>
               <tr>
                 <th>Severity</th>
-                <th>Alert Title</th>
+                <th>Incident Title</th>
                 <th>Details</th>
                 <th>Status</th>
                 <th>Action</th>
@@ -189,16 +191,16 @@ export function MonitorDetailView() {
       </Card>
 
       {/* Regressions & Detected Changes */}
-      <h2 className="mb3">Detected Changes & Regressions</h2>
+      <h2 className="mb3">Detected Changes & Page-Level Regressions</h2>
       <Card className="tableCard mb4">
         {(!monitor.findings || monitor.findings.length === 0) ? (
-          <div className="emptyState">No regressions detected between scans.</div>
+          <div className="emptyState">No regressions detected across crawled pages.</div>
         ) : (
           <table className="dataTable">
             <thead>
               <tr>
-                <th>Change Type</th>
-                <th>Category</th>
+                <th>Change</th>
+                <th>Affected URL</th>
                 <th>Issue Title</th>
                 <th>Severity</th>
                 <th>Detected At</th>
@@ -220,7 +222,9 @@ export function MonitorDetailView() {
                       {finding.changeType}
                     </Badge>
                   </td>
-                  <td>{finding.category}</td>
+                  <td>
+                    <span className="textSm fontMono">{finding.affectedUrl || 'Root Website'}</span>
+                  </td>
                   <td>
                     <strong>{finding.title}</strong>
                     <div className="textMuted textSm">{finding.description}</div>
@@ -251,7 +255,8 @@ export function MonitorDetailView() {
                 <th>Status</th>
                 <th>HTTP Status</th>
                 <th>Response Time</th>
-                <th>Score</th>
+                <th>Coverage</th>
+                <th>Health Score</th>
                 <th>Findings</th>
               </tr>
             </thead>
@@ -266,6 +271,7 @@ export function MonitorDetailView() {
                   </td>
                   <td>{run.httpStatus ? `HTTP ${run.httpStatus}` : '—'}</td>
                   <td>{run.responseTimeMs ? `${run.responseTimeMs} ms` : '—'}</td>
+                  <td>{run.pagesEvaluated} pages</td>
                   <td><strong>{run.scores?.overall ?? '—'}</strong></td>
                   <td>{run.findingsCount} issues ({run.newRegressionsCount} new)</td>
                 </tr>

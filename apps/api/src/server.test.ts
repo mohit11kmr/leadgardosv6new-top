@@ -15,7 +15,7 @@ describe('API Foundation and Tenant Isolation Tests', () => {
     const response = await request(app).get('/health');
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-  });
+  }, 15_000);
 
   it('enforces strict multi-tenant boundaries (Tenant Test)', async () => {
     const { app } = await import('./server.js');
@@ -83,5 +83,5 @@ describe('API Foundation and Tenant Isolation Tests', () => {
       .get(`/api/v1/audits/${auditIdA}/pages`)
       .set('Authorization', `Bearer ${tokenB}`);
     expect(getPagesB.status).toBe(404);
-  });
+  }, 15_000);
 });

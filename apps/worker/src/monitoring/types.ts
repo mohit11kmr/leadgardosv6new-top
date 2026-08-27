@@ -1,4 +1,4 @@
-import type { Severity, FindingChangeType, AlertStatus } from '@prisma/client';
+import type { Severity, FindingChangeType } from '@prisma/client';
 
 export interface HealthCheckResult {
   isAvailable: boolean;
@@ -12,9 +12,10 @@ export interface HealthCheckResult {
   error?: string;
 }
 
-export interface BaselineSnapshot {
-  websiteId: string;
-  capturedAt: string;
+export interface PageBaseline {
+  normalizedUrl: string;
+  title: string;
+  statusCode: number;
   scores: {
     lead: number;
     advertising: number;
@@ -26,6 +27,21 @@ export interface BaselineSnapshot {
   signals: Record<string, unknown>;
 }
 
+export interface BaselineSnapshot {
+  websiteId: string;
+  capturedAt: string;
+  scores: {
+    lead: number;
+    advertising: number;
+    seo: number;
+    security: number;
+    overall: number;
+  };
+  pages: PageBaseline[];
+  findingKeys: string[];
+  signals: Record<string, unknown>;
+}
+
 export interface DetectedRegression {
   ruleId: string;
   category: string;
@@ -33,6 +49,8 @@ export interface DetectedRegression {
   changeType: FindingChangeType;
   title: string;
   description: string;
+  affectedUrl?: string;
+  pageTitle?: string;
   beforeState: Record<string, unknown> | null;
   afterState: Record<string, unknown> | null;
   evidence: Record<string, unknown>;
@@ -46,4 +64,5 @@ export interface AlertNotification {
   severity: Severity;
   title: string;
   message: string;
+  affectedUrl?: string;
 }

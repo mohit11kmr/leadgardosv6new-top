@@ -7,12 +7,28 @@ import { entitlementService } from './entitlementService.js';
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 const monitoringQueue = new Queue('monitoring', { connection });
 
+const PLAN_MONITOR_LIMITS: Record<string, number> = {
+  FREE: 0,
+  PRO: 5,
+  AGENCY: 25,
+  ENTERPRISE: 100,
+};
+
+const FREQUENCY_MIN_PLANS: Record<string, string[]> = {
+  DAILY: ['FREE', 'PRO', 'AGENCY', 'ENTERPRISE'],
+  HOURLY: ['PRO', 'AGENCY', 'ENTERPRISE'],
+  FIFTEEN_MINUTES: ['PRO', 'AGENCY', 'ENTERPRISE'],
+  FIVE_MINUTES: ['AGENCY', 'ENTERPRISE'],
+};
+
 export class MonitoringService {
   async createMonitor(
     organizationId: string,
     input: {
       websiteId: string;
       frequency?: 'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY';
+      maxPages?: number;
+      maxDepth?: number;
       healthChecks?: Record<string, unknown>;
       alertPolicy?: Record<string, unknown>;
     }
@@ -22,39 +38,73 @@ export class MonitoringService {
     if (!entitlement.allowed) {
       const err = new Error(
         entitlement.reason ||
-          'Watchdog continuous monitoring is not included in your current plan. Upgrade to Pro, Agency, or Watchdog 24/7 add-on.'
+          'Watchdog continuous monitoring is not included in your current plan. Upgrade to Pro or Agency.'
       );
       (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
       throw err;
     }
 
-    // 2. Validate website belongs to organization
+    // 2. Check Plan Monitor Count Limit
+    const { plan } = await entitlementService.getOrganizationPlan(organizationId);
+    const planCode = plan?.code || 'FREE';
+    const limit = PLAN_MONITOR_LIMITS[planCode] ?? 0;
+
+    const currentCount = await db.monitoringConfig.count({
+      where: { organizationId, archivedAt: null },
+    });
+
+    if (currentCount >= limit) {
+      const err = new Error(
+        `Monitor limit reached (${currentCount}/${limit}) for your ${planCode} plan. Upgrade to add more monitored properties.`
+      );
+      (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
+      throw err;
+    }
+
+    // 3. Check Frequency Entitlement
+    const reqFrequency = input.frequency || 'HOURLY';
+    const allowedPlans = FREQUENCY_MIN_PLANS[reqFrequency] || ['PRO'];
+    if (!allowedPlans.includes(planCode)) {
+      const err = new Error(
+        `Monitoring frequency ${reqFrequency} requires an Agency or Enterprise subscription.`
+      );
+      (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
+      throw err;
+    }
+
+    // 4. Validate website belongs to organization
     const website = await db.website.findFirst({
       where: { id: input.websiteId, organizationId, deletedAt: null },
     });
     if (!website) throw new Error('Website not found or does not belong to organization');
 
-    // 3. Create or update monitoring config
+    // 5. Create or update monitoring config
     const monitoringConfig = await db.monitoringConfig.upsert({
       where: { websiteId: input.websiteId },
       create: {
         organizationId,
         websiteId: input.websiteId,
-        frequency: input.frequency || 'HOURLY',
+        frequency: reqFrequency,
+        maxPages: input.maxPages || 10,
+        maxDepth: input.maxDepth || 2,
         healthChecks: (input.healthChecks as object) || { tls: true, http: true, responseTimeThresholdMs: 3000 },
         alertPolicy: (input.alertPolicy as object) || { notifyEmail: true, minSeverity: 'HIGH' },
         enabled: true,
+        archivedAt: null,
       },
       update: {
-        frequency: input.frequency || 'HOURLY',
+        frequency: reqFrequency,
+        maxPages: input.maxPages || undefined,
+        maxDepth: input.maxDepth || undefined,
         healthChecks: (input.healthChecks as object) || undefined,
         alertPolicy: (input.alertPolicy as object) || undefined,
         enabled: true,
+        archivedAt: null,
       },
       include: { website: true },
     });
 
-    // 4. Enqueue initial immediate monitoring execution
+    // 6. Enqueue initial immediate monitoring execution
     await monitoringQueue.add('execute-monitor', {
       monitoringConfigId: monitoringConfig.id,
       triggeredBy: 'MANUAL',
@@ -65,7 +115,7 @@ export class MonitoringService {
 
   async listMonitors(organizationId: string) {
     return db.monitoringConfig.findMany({
-      where: { organizationId },
+      where: { organizationId, archivedAt: null },
       include: {
         website: true,
         runs: {
@@ -82,7 +132,7 @@ export class MonitoringService {
 
   async getMonitor(organizationId: string, monitorId: string) {
     return db.monitoringConfig.findFirst({
-      where: { id: monitorId, organizationId },
+      where: { id: monitorId, organizationId, archivedAt: null },
       include: {
         website: true,
         runs: {
@@ -107,20 +157,50 @@ export class MonitoringService {
     input: {
       enabled?: boolean;
       frequency?: 'FIVE_MINUTES' | 'FIFTEEN_MINUTES' | 'HOURLY' | 'DAILY';
+      maxPages?: number;
+      maxDepth?: number;
       healthChecks?: Record<string, unknown>;
       alertPolicy?: Record<string, unknown>;
     }
   ) {
+    // 1. Verify monitor belongs to organization
     const config = await db.monitoringConfig.findFirst({
-      where: { id: monitorId, organizationId },
+      where: { id: monitorId, organizationId, archivedAt: null },
     });
     if (!config) throw new Error('Monitor not found');
+
+    // 2. If changing frequency or re-enabling, verify plan entitlement
+    if (input.frequency || input.enabled === true) {
+      const entitlement = await entitlementService.canUseMonitoring(organizationId);
+      if (!entitlement.allowed) {
+        const err = new Error(
+          entitlement.reason || 'Monitoring requires an active Pro or Agency subscription.'
+        );
+        (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
+        throw err;
+      }
+
+      if (input.frequency) {
+        const { plan } = await entitlementService.getOrganizationPlan(organizationId);
+        const planCode = plan?.code || 'FREE';
+        const allowedPlans = FREQUENCY_MIN_PLANS[input.frequency] || ['PRO'];
+        if (!allowedPlans.includes(planCode)) {
+          const err = new Error(
+            `Monitoring frequency ${input.frequency} requires an Agency or Enterprise subscription.`
+          );
+          (err as unknown as { code: string }).code = 'PLAN_LIMIT_REACHED';
+          throw err;
+        }
+      }
+    }
 
     return db.monitoringConfig.update({
       where: { id: monitorId },
       data: {
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(input.frequency ? { frequency: input.frequency } : {}),
+        ...(input.maxPages ? { maxPages: input.maxPages } : {}),
+        ...(input.maxDepth ? { maxDepth: input.maxDepth } : {}),
         ...(input.healthChecks ? { healthChecks: input.healthChecks as object } : {}),
         ...(input.alertPolicy ? { alertPolicy: input.alertPolicy as object } : {}),
       },
@@ -128,62 +208,103 @@ export class MonitoringService {
     });
   }
 
-  async deleteMonitor(organizationId: string, monitorId: string) {
+  async deleteMonitor(organizationId: string, monitorId: string, hardDelete = false) {
     const config = await db.monitoringConfig.findFirst({
       where: { id: monitorId, organizationId },
     });
     if (!config) throw new Error('Monitor not found');
 
-    await db.monitoringFinding.deleteMany({ where: { monitoringConfigId: monitorId } });
-    await db.monitoringAlert.deleteMany({ where: { monitoringConfigId: monitorId } });
-    await db.monitoringRun.deleteMany({ where: { monitoringConfigId: monitorId } });
-    return db.monitoringConfig.delete({ where: { id: monitorId } });
+    if (hardDelete) {
+      await db.monitoringFinding.deleteMany({ where: { monitoringConfigId: monitorId } });
+      await db.monitoringAlert.deleteMany({ where: { monitoringConfigId: monitorId } });
+      await db.monitoringRun.deleteMany({ where: { monitoringConfigId: monitorId } });
+      return db.monitoringConfig.delete({ where: { id: monitorId } });
+    }
+
+    // Soft delete / Archival (Default)
+    return db.monitoringConfig.update({
+      where: { id: monitorId },
+      data: {
+        enabled: false,
+        archivedAt: new Date(),
+      },
+    });
   }
 
-  async getRuns(organizationId: string, monitorId: string) {
+  async getRuns(organizationId: string, monitorId: string, options: { cursor?: string; limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(100, options.limit || 20));
     const config = await db.monitoringConfig.findFirst({
       where: { id: monitorId, organizationId },
     });
     if (!config) throw new Error('Monitor not found');
 
-    return db.monitoringRun.findMany({
+    const runs = await db.monitoringRun.findMany({
       where: { monitoringConfigId: monitorId },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
+
+    const hasNextPage = runs.length > limit;
+    const items = hasNextPage ? runs.slice(0, limit) : runs;
+    const nextCursor = hasNextPage ? items[items.length - 1]?.id : null;
+
+    return { items, hasNextPage, nextCursor };
   }
 
-  async getFindings(organizationId: string, monitorId: string) {
+  async getFindings(organizationId: string, monitorId: string, options: { cursor?: string; limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(100, options.limit || 25));
     const config = await db.monitoringConfig.findFirst({
       where: { id: monitorId, organizationId },
     });
     if (!config) throw new Error('Monitor not found');
 
-    return db.monitoringFinding.findMany({
+    const findings = await db.monitoringFinding.findMany({
       where: { monitoringConfigId: monitorId },
       orderBy: { detectedAt: 'desc' },
-      take: 100,
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
+
+    const hasNextPage = findings.length > limit;
+    const items = hasNextPage ? findings.slice(0, limit) : findings;
+    const nextCursor = hasNextPage ? items[items.length - 1]?.id : null;
+
+    return { items, hasNextPage, nextCursor };
   }
 
-  async getAlerts(organizationId: string, monitorId: string) {
+  async getAlerts(organizationId: string, monitorId: string, options: { cursor?: string; limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(100, options.limit || 20));
     const config = await db.monitoringConfig.findFirst({
       where: { id: monitorId, organizationId },
     });
     if (!config) throw new Error('Monitor not found');
 
-    return db.monitoringAlert.findMany({
+    const alerts = await db.monitoringAlert.findMany({
       where: { monitoringConfigId: monitorId },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
+
+    const hasNextPage = alerts.length > limit;
+    const items = hasNextPage ? alerts.slice(0, limit) : alerts;
+    const nextCursor = hasNextPage ? items[items.length - 1]?.id : null;
+
+    return { items, hasNextPage, nextCursor };
   }
 
-  async acknowledgeAlert(organizationId: string, alertId: string) {
+  async acknowledgeAlert(organizationId: string, monitorId: string, alertId: string) {
+    // Cross-monitor & cross-organization IDOR protection:
+    // Alert must belong to BOTH the specified organization AND the specified monitoringConfig!
     const alert = await db.monitoringAlert.findFirst({
-      where: { id: alertId, organizationId },
+      where: {
+        id: alertId,
+        organizationId,
+        monitoringConfigId: monitorId,
+      },
     });
-    if (!alert) throw new Error('Alert not found');
+    if (!alert) throw new Error('Alert not found or does not match monitor and organization');
 
     return db.monitoringAlert.update({
       where: { id: alertId },
@@ -196,9 +317,17 @@ export class MonitoringService {
 
   async triggerManualRun(organizationId: string, monitorId: string) {
     const config = await db.monitoringConfig.findFirst({
-      where: { id: monitorId, organizationId },
+      where: { id: monitorId, organizationId, archivedAt: null },
     });
     if (!config) throw new Error('Monitor not found');
+
+    // Concurrency limit check: If a run is currently in RUNNING state, return it instead of double triggering
+    const activeRun = await db.monitoringRun.findFirst({
+      where: { monitoringConfigId: monitorId, status: 'RUNNING' },
+    });
+    if (activeRun) {
+      return { enqueued: false, runId: activeRun.id, message: 'Scan already in progress' };
+    }
 
     const job = await monitoringQueue.add('execute-monitor', {
       monitoringConfigId: monitorId,
