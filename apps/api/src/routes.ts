@@ -39,7 +39,107 @@ apiRouter.post('/audits', requireRole('MEMBER'), async (request: AuthRequest, re
 apiRouter.get('/audits', async (request: AuthRequest, response, next) => { try { const audits = await db.audit.findMany({ where: { organizationId: request.auth!.organizationId }, orderBy: { createdAt: 'desc' }, take: Math.min(Number(request.query.limit) || 25, 100), include: { website: true, score: true } }); response.json({ success: true, data: audits }); } catch (error) { next(error); } });
 apiRouter.get('/audits/:id', async (request: AuthRequest, response, next) => { try { const audit = await db.audit.findFirst({ where: { id: request.params.id, organizationId: request.auth!.organizationId }, include: { website: true, score: true, findings: { orderBy: { severity: 'asc' } } } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); response.json({ success: true, data: audit }); } catch (error) { next(error); } });
 apiRouter.get('/audits/:id/progress', async (request: AuthRequest, response, next) => { try { const audit = await db.audit.findFirst({ where: { id: request.params.id, organizationId: request.auth!.organizationId }, select: { id: true, status: true, progress: true, progressStage: true } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); response.json({ success: true, data: audit }); } catch (error) { next(error); } });
-apiRouter.get('/audits/:id/findings', async (request: AuthRequest, response, next) => { try { const filters = z.object({ category: z.enum(['LEAD', 'ADVERTISING', 'SEO', 'SECURITY']).optional(), severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']).optional(), ruleId: z.string().regex(/^LG-\d{3}$/).optional(), limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().uuid().optional() }).parse(request.query); const audit = await db.audit.findFirst({ where: { id: String(request.params.id), organizationId: request.auth!.organizationId }, select: { id: true } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); const findings = await db.auditFinding.findMany({ where: { auditId: audit.id, ...(filters.category ? { category: filters.category } : {}), ...(filters.severity ? { severity: filters.severity } : {}), ...(filters.ruleId ? { ruleId: filters.ruleId } : {}) }, take: filters.limit + 1, ...(filters.cursor ? { skip: 1, cursor: { id: filters.cursor } } : {}), orderBy: { id: 'asc' } }); const hasNextPage = findings.length > filters.limit; const data = hasNextPage ? findings.slice(0, filters.limit) : findings; response.json({ success: true, data, meta: { hasNextPage, hasPreviousPage: Boolean(filters.cursor), nextCursor: hasNextPage ? data[data.length - 1]?.id ?? null : null, previousCursor: filters.cursor ?? null } }); } catch (error) { next(error); } });
+apiRouter.get('/audits/:id/findings', async (request: AuthRequest, response, next) => {
+  try {
+    const filters = z.object({
+      category: z.enum(['LEAD', 'ADVERTISING', 'SEO', 'SECURITY']).optional(),
+      severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']).optional(),
+      scope: z.enum(['PAGE', 'WEBSITE', 'AUDIT']).optional(),
+      ruleId: z.string().regex(/^LG-\d{3}$/).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      cursor: z.string().uuid().optional(),
+    }).parse(request.query);
+
+    const audit = await db.audit.findFirst({
+      where: { id: String(request.params.id), organizationId: request.auth!.organizationId },
+      select: { id: true },
+    });
+    if (!audit) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) },
+      });
+    }
+
+    const findings = await db.auditFinding.findMany({
+      where: {
+        auditId: audit.id,
+        ...(filters.category ? { category: filters.category } : {}),
+        ...(filters.severity ? { severity: filters.severity } : {}),
+        ...(filters.scope ? { scope: filters.scope } : {}),
+        ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
+      },
+      take: filters.limit + 1,
+      ...(filters.cursor ? { skip: 1, cursor: { id: filters.cursor } } : {}),
+      orderBy: { id: 'asc' },
+    });
+
+    const hasNextPage = findings.length > filters.limit;
+    const data = hasNextPage ? findings.slice(0, filters.limit) : findings;
+
+    response.json({
+      success: true,
+      data,
+      meta: {
+        hasNextPage,
+        hasPreviousPage: Boolean(filters.cursor),
+        nextCursor: hasNextPage ? data[data.length - 1]?.id ?? null : null,
+        previousCursor: filters.cursor ?? null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/audits/:id/pages', async (request: AuthRequest, response, next) => {
+  try {
+    const audit = await db.audit.findFirst({
+      where: { id: String(request.params.id), organizationId: request.auth!.organizationId },
+      select: { id: true },
+    });
+    if (!audit) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) },
+      });
+    }
+
+    const pages = await db.auditPage.findMany({
+      where: { auditId: audit.id },
+      orderBy: { depth: 'asc' },
+    });
+
+    response.json({ success: true, data: pages });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/audits/:id/runs', async (request: AuthRequest, response, next) => {
+  try {
+    const audit = await db.audit.findFirst({
+      where: { id: String(request.params.id), organizationId: request.auth!.organizationId },
+      select: { id: true },
+    });
+    if (!audit) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) },
+      });
+    }
+
+    const runs = await db.auditRun.findMany({
+      where: { auditId: audit.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    response.json({ success: true, data: runs });
+  } catch (error) {
+    next(error);
+  }
+});
+
 apiRouter.get('/audits/:id/score', async (request: AuthRequest, response, next) => { try { const audit = await db.audit.findFirst({ where: { id: request.params.id, organizationId: request.auth!.organizationId }, include: { score: true } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); response.json({ success: true, data: audit.score }); } catch (error) { next(error); } });
 apiRouter.get('/audits/:id/business-impact', async (request: AuthRequest, response, next) => { try { const audit = await db.audit.findFirst({ where: { id: String(request.params.id), organizationId: request.auth!.organizationId }, select: { businessImpact: true } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); response.json({ success: true, data: audit.businessImpact }); } catch (error) { next(error); } });
 apiRouter.get('/audits/:id/summary', async (request: AuthRequest, response, next) => { try { const audit = await db.audit.findFirst({ where: { id: String(request.params.id), organizationId: request.auth!.organizationId }, select: { executiveSummary: true } }); if (!audit) return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) } }); response.json({ success: true, data: audit.executiveSummary }); } catch (error) { next(error); } });

@@ -1,1 +1,17 @@
-<!doctype html><html><body><a href="https://wa.me/091234567890">Bad zero prefix</a><a href="https://wa.me/91919876543210">Duplicated country code</a></body></html>
+<!doctype html>
+<html>
+<head><title>Bad WhatsApp Fixture</title></head>
+<body>
+  <h1>Bad WhatsApp Links</h1>
+  <!-- Zero prefix -->
+  <a href="https://wa.me/091234567890">Leading Zero</a>
+  <!-- Duplicated country code -->
+  <a href="https://wa.me/91919876543210">Duplicated +91</a>
+  <!-- Missing +91 country prefix -->
+  <a href="https://wa.me/9876543210">Missing 91 Prefix</a>
+  <!-- Invalid mobile format (starts with 1) -->
+  <a href="https://wa.me/911234567890">Invalid Mobile Digit</a>
+  <!-- Empty phone -->
+  <a href="https://api.whatsapp.com/send?phone=">Empty Phone</a>
+</body>
+</html>

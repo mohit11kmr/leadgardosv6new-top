@@ -1,12 +1,7 @@
-export const roles=['OWNER','ADMIN','MEMBER','VIEWER','AGENCY_ADMIN','AGENCY_MEMBER'] as const; export type Role=(typeof roles)[number];
-export const severities=['CRITICAL','HIGH','MEDIUM','LOW','INFO'] as const; export type Severity=(typeof severities)[number];
-export type Finding={ruleId:string;category:string;severity:Severity;title:string;description:string;evidence:unknown;affectedUrl?:string;recommendation:string;scoreImpact:number;businessImpact?:string;metadata?:Record<string,unknown>};
-export type ScannerContext={auditId:string;websiteUrl:string;signal:AbortSignal}; export interface Scanner{readonly ruleId:string;readonly category:string;scan(context:ScannerContext):Promise<Finding[]>}
-export type ApiResponse<T>={success:true;data:T;meta?:Record<string,unknown>}|{success:false;error:{code:string;message:string;requestId:string}};
-const featureNames=['4-Pillar Diagnostic Scan','WhatsApp Link Scanner','Click-to-Call Validator','Contact Form & CTA Detector','Meta Pixel Inspector','GA4 / GTM Probe','Google Indexing Check','Canonical Scanner','SSL/TLS + Mixed Content','Security Headers','OpenGraph Checker','Lead Health Score','Revenue Loss Estimator','Business Impact Summary','Funnel Leakage Simulator','Revenue Scenario Planner','Executive Intelligence Dashboard','Zero-Intent WhatsApp Optimizer','Cart Leakage Monitor','Competitive Radar','Express Fix','Watchdog','Pro / Agency / Enterprise Plans','Razorpay Checkout','Razorpay HMAC Webhook','Client Workspace Management','500-Site Prospect Hunter','AI Cold Pitch Generator','White-Label Reporting','Diagnostic Studio Widget Generator','Competitor Sabotage Radar','Cryptographic Report Links','White-Label PDF Reports','Testimonials Wall','Public REST API v1','HMAC Webhooks','OpenAPI / Swagger','Role-Gated Admin','Billing & Subscription Management','Account Settings & Security Profile'] as const;
-const featureIds=['LG-001','LG-001','LG-003','LG-001','LG-006','LG-007','LG-010','LG-011','LG-013','LG-014','LG-012','LG-016','LG-016','LG-016','LG-009','LG-008','LG-029','LG-002','LG-021','LG-020','LG-032','LG-017','LG-031','LG-031','LG-031','LG-024','LG-022','LG-023','LG-026','LG-028','LG-020','LG-025','LG-026','LG-037','LG-033','LG-019','LG-033','LG-034','LG-035','LG-036'] as const;
-export const featureRegistry=featureNames.map((name,index)=>({key:`${featureIds[index]}-${index+1}`,id:featureIds[index],name}));
-export { validateExternalUrl } from './url-security.js';
-export type ScoreBreakdown={lead:number;advertising:number;seo:number;security:number;overall:number};
-export function calculateScores(findings:Finding[]):ScoreBreakdown { const score={lead:100,advertising:100,seo:100,security:100}; for(const finding of findings){const category=finding.category.toLowerCase()==='advertising'?'advertising':finding.category.toLowerCase() as keyof typeof score;if(category in score)score[category]=Math.max(0,score[category]-Math.max(0,finding.scoreImpact));} return {...score,overall:Math.round((score.lead+score.advertising+score.seo+score.security)/4)}; }
-export * from './intelligence.js';
+export * from './types.js';
+export * from './scoring.js';
+export * from './business-impact.js';
+export * from './priority.js';
+export * from './registry.js';
+export * from './url-security.js';
+export * from './scanners/index.js';

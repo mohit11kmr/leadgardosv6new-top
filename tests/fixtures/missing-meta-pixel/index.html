@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <title>Missing Meta Pixel</title>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST12345"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-TEST12345');
+  </script>
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});})(window,document,'script','dataLayer','GTM-TEST12');</script>
+</head>
+<body>
+  <h1>Has GA4 and GTM, but missing Meta Pixel</h1>
+</body>
+</html>
