@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface MixedContentScanResult {
   findings: Finding[];
@@ -34,12 +34,16 @@ export function scanMixedContent(page: PageRecord, _context?: ScannerContext): M
       if (!insecureUrl || seenInsecureUrls.has(insecureUrl)) continue;
       seenInsecureUrls.add(insecureUrl);
 
+      const isActive = tag === 'script' || tag === 'iframe';
+      const normalizedIssueKey = isActive ? 'MIXED_CONTENT_ACTIVE' : 'MIXED_CONTENT_PASSIVE';
+
       findings.push({
         ruleId: 'LG-013',
-        internalKey: 'MIXED_CONTENT',
+        internalKey: normalizedIssueKey,
+        normalizedIssueKey,
         category: 'SECURITY',
         scope: 'PAGE',
-        severity: tag === 'script' || tag === 'iframe' ? 'HIGH' : 'MEDIUM',
+        severity: isActive ? 'HIGH' : 'MEDIUM',
         title: `Mixed content detected: ${tag} loaded over insecure HTTP`,
         description: `The HTTPS page requests an active or passive resource (${tag}) over unencrypted HTTP: "${insecureUrl.slice(0, 100)}".`,
         affectedUrl: page.url,
@@ -52,7 +56,7 @@ export function scanMixedContent(page: PageRecord, _context?: ScannerContext): M
           metadata: { resourceTag: tag, resourceUrl: insecureUrl },
         },
         recommendation: `Serve all embedded ${tag} assets securely over HTTPS.`,
-        scoreImpact: 8,
+        scoreImpact: isActive ? 15 : 5,
         businessImpact: 'Browsers may block scripts/styles or display "Not Secure" warning indicators to visitors.',
       });
     }
@@ -63,4 +67,26 @@ export function scanMixedContent(page: PageRecord, _context?: ScannerContext): M
     hasMixedContent: findings.length > 0,
     insecureResourceCount: findings.length,
   };
+}
+
+export function runMixedContentScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanMixedContent(page, context);
+    return {
+      scannerKey: 'MIXED_CONTENT',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        hasMixedContent: res.hasMixedContent,
+        insecureResourceCount: res.insecureResourceCount,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'MIXED_CONTENT',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

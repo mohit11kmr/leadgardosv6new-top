@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface SeoScanResult {
   findings: Finding[];
@@ -35,6 +35,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
     findings.push({
       ruleId: 'LG-010',
       internalKey: 'NOINDEX_PAGE',
+      normalizedIssueKey: 'NOINDEX_BLOCKING',
       category: 'SEO',
       scope: 'PAGE',
       severity: 'HIGH',
@@ -68,6 +69,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
     findings.push({
       ruleId: 'LG-011',
       internalKey: 'CANONICAL_MISSING',
+      normalizedIssueKey: 'CANONICAL_MISSING',
       category: 'SEO',
       scope: 'PAGE',
       severity: 'MEDIUM',
@@ -89,6 +91,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
     findings.push({
       ruleId: 'LG-011',
       internalKey: 'CANONICAL_DUPLICATE',
+      normalizedIssueKey: 'CANONICAL_DUPLICATE',
       category: 'SEO',
       scope: 'PAGE',
       severity: 'MEDIUM',
@@ -118,6 +121,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
         findings.push({
           ruleId: 'LG-011',
           internalKey: 'CANONICAL_RELATIVE',
+          normalizedIssueKey: 'CANONICAL_RELATIVE',
           category: 'SEO',
           scope: 'PAGE',
           severity: 'LOW',
@@ -143,6 +147,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
         findings.push({
           ruleId: 'LG-011',
           internalKey: 'CANONICAL_FRAGMENT',
+          normalizedIssueKey: 'CANONICAL_RELATIVE',
           category: 'SEO',
           scope: 'PAGE',
           severity: 'LOW',
@@ -167,6 +172,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
         findings.push({
           ruleId: 'LG-011',
           internalKey: 'CANONICAL_CROSS_ORIGIN',
+          normalizedIssueKey: 'CANONICAL_CROSS_ORIGIN',
           category: 'SEO',
           scope: 'PAGE',
           severity: 'HIGH',
@@ -192,6 +198,7 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
       findings.push({
         ruleId: 'LG-011',
         internalKey: 'CANONICAL_MALFORMED',
+        normalizedIssueKey: 'CANONICAL_MISSING',
         category: 'SEO',
         scope: 'PAGE',
         severity: 'HIGH',
@@ -217,4 +224,27 @@ export function scanSeo(page: PageRecord, _context?: ScannerContext): SeoScanRes
     canonicalUrl,
     hasValidCanonical,
   };
+}
+
+export function runSeoScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanSeo(page, context);
+    return {
+      scannerKey: 'SEO',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        hasNoindex: res.hasNoindex,
+        hasValidCanonical: res.hasValidCanonical,
+        canonicalUrl: res.canonicalUrl ?? '',
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'SEO',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

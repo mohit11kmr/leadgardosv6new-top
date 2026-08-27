@@ -20,8 +20,10 @@ export interface FindingEvidence {
 }
 
 export interface Finding {
+  id?: string;
   ruleId: string;
   internalKey?: string;
+  normalizedIssueKey?: string;
   category: FindingCategory;
   scope: FindingScope;
   severity: Severity;
@@ -59,16 +61,53 @@ export interface ScoreBreakdown {
   overall: number;
 }
 
-export type ScoreAggregationPolicy = 'SITE_ONCE' | 'PAGE_BOUNDED' | 'PAGE_SUM';
+export type ScoreAggregationPolicy =
+  | 'ONCE_PER_AUDIT'
+  | 'ONCE_PER_WEBSITE'
+  | 'PER_PAGE'
+  | 'BOUNDED_PER_PAGE'
+  | 'SITE_ONCE'
+  | 'PAGE_BOUNDED'
+  | 'PAGE_SUM';
 
 export interface ScoreRule {
   ruleId: string;
   internalKey?: string;
+  normalizedIssueKey?: string;
   category: FindingCategory;
   defaultImpact: number;
   severity: Severity;
   aggregationPolicy: ScoreAggregationPolicy;
   maxPenalty?: number;
+  enabled?: boolean;
+  version?: string;
+}
+
+export interface ScoreDeduction {
+  ruleId: string;
+  internalKey?: string;
+  normalizedIssueKey?: string;
+  category: FindingCategory;
+  scope: FindingScope;
+  penalty: number;
+  occurrences: number;
+  policy: ScoreAggregationPolicy;
+  reason: string;
+}
+
+export interface PillarScoreExplanation {
+  score: number;
+  deductions: ScoreDeduction[];
+  topRules: string[];
+}
+
+export interface ScoreExplanation {
+  version: string;
+  overall: number;
+  lead: PillarScoreExplanation;
+  advertising: PillarScoreExplanation;
+  seo: PillarScoreExplanation;
+  security: PillarScoreExplanation;
 }
 
 export interface ScannerContext {
@@ -78,6 +117,16 @@ export interface ScannerContext {
   signal?: AbortSignal;
 }
 
+export type ScannerStatus = 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'SKIPPED';
+
+export interface ScannerResult {
+  scannerKey: string;
+  status: ScannerStatus;
+  findings: Finding[];
+  metrics?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface ScannerDefinition {
   internalKey: string;
   featureId: string;
@@ -85,7 +134,13 @@ export interface ScannerDefinition {
   category: FindingCategory;
   scope: FindingScope;
   severityPolicy: Severity;
+  version?: string;
   enabled: boolean;
+}
+
+export interface ScannerExecutableDefinition extends ScannerDefinition {
+  version: string;
+  run(page: PageRecord, context?: ScannerContext): Promise<ScannerResult> | ScannerResult;
 }
 
 export interface Scanner {
@@ -113,6 +168,7 @@ export interface BusinessImpact {
   estimatedLostOpportunities: number;
   estimatedOpportunityLoss: number;
   currency: string;
+  assumptions: string[];
   methodology: string;
 }
 
@@ -128,6 +184,21 @@ export interface ExecutiveSummary {
   priorityFixes: string[];
   businessImpact: BusinessImpact;
   confidence: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+export interface AuditTelemetry {
+  queueWaitMs?: number;
+  crawlDurationMs?: number;
+  fetchDurationMs?: number;
+  scanDurationMs?: number;
+  aggregationDurationMs?: number;
+  scoreDurationMs?: number;
+  finalizationDurationMs?: number;
+  totalDurationMs?: number;
+  pagesDiscovered?: number;
+  pagesFetched?: number;
+  pagesFailed?: number;
+  findingsGenerated?: number;
 }
 
 export type ApiResponse<T> =

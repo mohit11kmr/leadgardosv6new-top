@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('application and protected route', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading')).toContainText('Find the places');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Stop losing leads/i);
   await page.goto('/dashboard');
   await expect(page).toHaveURL(/login/);
 });
@@ -16,9 +16,10 @@ test('register and add a website', async ({ page }) => {
   await page.getByLabel('Password').fill('correct horse battery staple');
   await page.getByRole('button', { name: /create account/i }).click();
   await expect(page).toHaveURL(/dashboard/);
-  await page.getByRole('button', { name: /add website/i }).click();
+
+  await page.getByRole('button', { name: '+ Add website' }).click();
   await page.getByLabel('Website name').fill('Fixture site');
   await page.getByLabel('Website URL').fill('https://example.com');
-  await page.getByRole('button', { name: /add website/i }).click();
-  await expect(page.getByText('example.com')).toBeVisible();
+  await page.getByRole('button', { name: 'Add website ->' }).click();
+  await expect(page.getByText('https://example.com')).toBeVisible();
 });

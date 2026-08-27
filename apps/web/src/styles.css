@@ -547,3 +547,79 @@ input {
 .muted {
   color: var(--text-muted);
 }
+
+.assumptionsList {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.assumptionsList b {
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.assumptionsList ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.telemetryCard {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  margin: 1.5rem 0;
+  overflow: hidden;
+}
+
+.telemetryToggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  border: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.telemetryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.telemetryGrid span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.telemetryGrid strong {
+  display: block;
+  font-size: 1.05rem;
+  color: #16372d;
+  margin-top: 0.15rem;
+}
+
+.issueTag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-family: monospace;
+}

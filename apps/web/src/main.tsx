@@ -19,6 +19,8 @@ type FindingEvidence = {
 type Finding = {
   id: string;
   ruleId: string;
+  internalKey?: string;
+  normalizedIssueKey?: string;
   category: 'LEAD' | 'ADVERTISING' | 'SEO' | 'SECURITY';
   scope: 'PAGE' | 'WEBSITE' | 'AUDIT';
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
@@ -44,6 +46,7 @@ type BusinessImpact = {
   estimatedLostOpportunities: number;
   estimatedOpportunityLoss: number;
   currency: string;
+  assumptions?: string[];
   methodology: string;
 };
 
@@ -61,6 +64,21 @@ type ExecutiveSummary = {
   confidence: 'LOW' | 'MEDIUM' | 'HIGH';
 };
 
+type AuditTelemetry = {
+  queueWaitMs?: number;
+  crawlDurationMs?: number;
+  fetchDurationMs?: number;
+  scanDurationMs?: number;
+  aggregationDurationMs?: number;
+  scoreDurationMs?: number;
+  finalizationDurationMs?: number;
+  totalDurationMs?: number;
+  pagesDiscovered?: number;
+  pagesFetched?: number;
+  pagesFailed?: number;
+  findingsGenerated?: number;
+};
+
 type Audit = {
   id: string;
   status: string;
@@ -72,9 +90,10 @@ type Audit = {
   findings?: Finding[];
   businessImpact?: BusinessImpact | null;
   executiveSummary?: ExecutiveSummary | null;
+  telemetry?: AuditTelemetry | null;
 };
 
-type Website = { id: string; name: string; url: string; domain: string; audits: Audit[] };
+type Website = { id: string; name: string; url: string; domain: string; audits?: Audit[] };
 type Organization = { id: string; name: string };
 
 const authSnapshot = () => Boolean(localStorage.getItem(accessTokenKey));
@@ -99,12 +118,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         {authenticated && (
           <button
             className="logoutButton"
+            type="button"
             onClick={() => {
               clearTokens();
-              location.href = '/login';
+              window.location.href = '/login';
             }}
           >
-            Log out
+            Sign out
           </button>
         )}
       </nav>
@@ -114,39 +134,40 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function Home() {
-  const authenticated = useSyncExternalStore(subscribeAuth, authSnapshot, () => false);
   return (
     <Shell>
-      <p className="eyebrow">WEBSITE DIAGNOSTIC INTELLIGENCE</p>
-      <h1>Find the places your website loses momentum.</h1>
-      <p className="lede">Lead, tracking, SEO, and security signals translated into decisions.</p>
-      <Link className="action" to={authenticated ? '/dashboard' : '/login'}>
-        Enter workspace -&gt;
+      <p className="eyebrow">DIAGNOSTIC ENGINE HARDENED</p>
+      <h1>Stop losing leads before they convert.</h1>
+      <p className="lede">
+        Run automated 4-pillar diagnostics across lead channels, ad tracking readiness, search indexability, and security trust factors.
+      </p>
+      <Link to="/login" className="action">
+        Open Workspace -&gt;
       </Link>
     </Shell>
   );
 }
 
 function Login() {
-  const navigate = useNavigate();
   const [register, setRegister] = useState(false);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   return (
     <Shell>
       <div className="narrow">
-        <p className="eyebrow">WORKSPACE ACCESS</p>
-        <h1>{register ? 'Create your workspace.' : 'Sign in to LeadGuard.'}</h1>
+        <p className="eyebrow">{register ? 'CREATE ACCOUNT' : 'SECURE ACCESS'}</p>
+        <h2>{register ? 'Create your organization' : 'Sign in to LeadGuard'}</h2>
         <form
           onSubmit={async (event) => {
             event.preventDefault();
             setError('');
             const data = new FormData(event.currentTarget);
             try {
-              await auth(register ? '/auth/register' : '/auth/login', {
-                email: data.get('email'),
-                password: data.get('password'),
-                ...(register ? { organizationName: data.get('organizationName') } : {}),
+              await auth(register ? 'register' : 'login', {
+                email: String(data.get('email')),
+                password: String(data.get('password')),
+                organizationName: data.get('organizationName') ? String(data.get('organizationName')) : undefined,
               });
               navigate('/dashboard', { replace: true });
             } catch (cause) {
@@ -256,46 +277,47 @@ function Dashboard() {
 
   return (
     <Shell>
-      <header className="row">
+      <div className="row">
         <div>
-          <p className="eyebrow">ACTIVE WORKSPACE</p>
-          <h2>Diagnostic command center</h2>
+          <p className="eyebrow">ORGANIZATION WORKSPACE</p>
+          <h2>Monitored Websites</h2>
         </div>
-        <select
-          aria-label="Active organization"
-          value={active}
-          onChange={async (event) => {
-            const switched = await api<{ accessToken: string }>(`/organizations/${event.target.value}/switch`, {
-              method: 'POST',
-            });
-            localStorage.setItem(accessTokenKey, switched.accessToken);
-            window.dispatchEvent(new Event('leadguard-auth-changed'));
-            void load();
-          }}
-        >
-          {orgs.map((org) => (
-            <option value={org.id} key={org.id}>
-              {org.name}
-            </option>
-          ))}
-        </select>
-      </header>
-      <AddWebsite onAdded={() => void load()} />
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+        {orgs.length > 1 && (
+          <select
+            value={active}
+            onChange={async (event) => {
+              await api('/organizations/switch', {
+                method: 'POST',
+                body: JSON.stringify({ organizationId: event.target.value }),
+              });
+              await load();
+            }}
+          >
+            {orgs.map((org) => (
+              <option key={org.id} value={org.id}>
+                {org.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      <p className="lede">View diagnostics, opportunity loss estimates, and technical security posture.</p>
+      {error && <p className="error">{error}</p>}
+      <AddWebsite onAdded={load} />
       <section className="list">
-        <h3>Websites</h3>
-        {!websites.length ? (
-          <p className="muted">No websites yet.</p>
+        {websites.length === 0 ? (
+          <p className="muted">No websites configured yet. Add your first website to run diagnostics.</p>
         ) : (
           websites.map((site) => (
             <article key={site.id}>
               <div>
-                <strong>{site.name}</strong>
-                <span>{site.domain}</span>
+                <h4>{site.name}</h4>
+                <span>{site.url}</span>
+                {site.audits[0]?.score && (
+                  <span className="muted">
+                    Health Score: <b>{site.audits[0].score.overall}/100</b> ({site.audits[0].status})
+                  </span>
+                )}
               </div>
               <Link to={`/websites/${site.id}`}>Open -&gt;</Link>
             </article>
@@ -375,6 +397,7 @@ function AuditPanel({ audit }: { audit: Audit }) {
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [scopeFilter, setScopeFilter] = useState<string>('ALL');
+  const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
 
   useEffect(() => {
     if (['COMPLETED', 'PARTIAL'].includes(audit.status)) {
@@ -385,6 +408,7 @@ function AuditPanel({ audit }: { audit: Audit }) {
   const score = detail?.score;
   const impact = detail?.businessImpact;
   const summary = detail?.executiveSummary;
+  const telemetry = detail?.telemetry;
   const findings = detail?.findings ?? [];
 
   const filteredFindings = findings.filter((f) => {
@@ -518,6 +542,16 @@ function AuditPanel({ audit }: { audit: Audit }) {
               <strong>{(impact.estimatedConversionRisk * 100).toFixed(1)}%</strong>
             </div>
           </div>
+          {impact.assumptions && impact.assumptions.length > 0 && (
+            <div className="assumptionsList">
+              <b>Model Assumptions:</b>
+              <ul>
+                {impact.assumptions.map((item, idx) => (
+                  <li key={idx}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="methodology">{impact.methodology}</p>
         </div>
       )}
@@ -550,6 +584,48 @@ function AuditPanel({ audit }: { audit: Audit }) {
         </div>
       )}
 
+      {/* Audit Telemetry Technical Details */}
+      {telemetry && (
+        <div className="telemetryCard">
+          <button
+            type="button"
+            className="telemetryToggle"
+            onClick={() => setShowTelemetry((v) => !v)}
+          >
+            <span>Audit Performance Telemetry</span>
+            <span>{showTelemetry ? '▲ Hide' : '▼ View Breakdown'}</span>
+          </button>
+          {showTelemetry && (
+            <div className="telemetryGrid">
+              <div>
+                <span>Total Duration</span>
+                <strong>{telemetry.totalDurationMs ?? 0} ms</strong>
+              </div>
+              <div>
+                <span>Crawl Time</span>
+                <strong>{telemetry.crawlDurationMs ?? 0} ms</strong>
+              </div>
+              <div>
+                <span>Scan Time</span>
+                <strong>{telemetry.scanDurationMs ?? 0} ms</strong>
+              </div>
+              <div>
+                <span>Aggregation</span>
+                <strong>{telemetry.aggregationDurationMs ?? 0} ms</strong>
+              </div>
+              <div>
+                <span>Pages Fetched</span>
+                <strong>{telemetry.pagesFetched ?? 0}</strong>
+              </div>
+              <div>
+                <span>Pages Discovered</span>
+                <strong>{telemetry.pagesDiscovered ?? 0}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filtered Findings List */}
       <div className="findingsList">
         <h4>Detailed Diagnostic Findings ({filteredFindings.length})</h4>
@@ -560,6 +636,9 @@ function AuditPanel({ audit }: { audit: Audit }) {
               <span className="scopeTag">{finding.scope}</span>
               <span className="categoryTag">{finding.category}</span>
               <span className="ruleTag">{finding.ruleId}</span>
+              {finding.normalizedIssueKey && (
+                <span className="issueTag">{finding.normalizedIssueKey}</span>
+              )}
             </div>
             <h5>{finding.title}</h5>
             <p>{finding.description}</p>

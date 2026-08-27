@@ -1,5 +1,5 @@
 import tls from 'node:tls';
-import type { Finding, ScannerContext } from '../types.js';
+import type { Finding, ScannerContext, ScannerResult } from '../types.js';
 
 export interface TlsInspectionResult {
   findings: Finding[];
@@ -32,6 +32,7 @@ export async function inspectTls(targetUrl: string, _context?: ScannerContext): 
     findings.push({
       ruleId: 'LG-013',
       internalKey: 'TLS_ERROR',
+      normalizedIssueKey: 'TLS_ERROR',
       category: 'SECURITY',
       scope: 'WEBSITE',
       severity: 'CRITICAL',
@@ -87,6 +88,7 @@ export async function inspectTls(targetUrl: string, _context?: ScannerContext): 
           findings.push({
             ruleId: 'LG-013',
             internalKey: 'TLS_ERROR',
+            normalizedIssueKey: 'TLS_ERROR',
             category: 'SECURITY',
             scope: 'WEBSITE',
             severity: 'CRITICAL',
@@ -131,6 +133,7 @@ export async function inspectTls(targetUrl: string, _context?: ScannerContext): 
           findings.push({
             ruleId: 'LG-013',
             internalKey: 'TLS_ERROR',
+            normalizedIssueKey: 'TLS_ERROR',
             category: 'SECURITY',
             scope: 'WEBSITE',
             severity: 'CRITICAL',
@@ -191,6 +194,7 @@ export async function inspectTls(targetUrl: string, _context?: ScannerContext): 
       findings.push({
         ruleId: 'LG-013',
         internalKey: 'TLS_ERROR',
+        normalizedIssueKey: 'TLS_ERROR',
         category: 'SECURITY',
         scope: 'WEBSITE',
         severity: 'CRITICAL',
@@ -233,4 +237,29 @@ export async function inspectTls(targetUrl: string, _context?: ScannerContext): 
       });
     });
   });
+}
+
+export async function runTlsScanner(targetUrl: string, context?: ScannerContext): Promise<ScannerResult> {
+  try {
+    const res = await inspectTls(targetUrl, context);
+    return {
+      scannerKey: 'TLS',
+      status: res.status === 'VALID' ? 'COMPLETED' : 'PARTIAL',
+      findings: res.findings,
+      metrics: {
+        isHttps: res.isHttps,
+        certificateValid: res.certificateValid,
+        daysRemaining: res.daysRemaining ?? 0,
+        status: res.status,
+      },
+      error: res.error,
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'TLS',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown TLS error',
+    };
+  }
 }

@@ -1,9 +1,10 @@
-import type { Finding, Severity, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, Severity, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface HeaderDefinition {
   header: string;
   label: string;
   internalKey: string;
+  normalizedIssueKey: string;
   severity: Severity;
   scoreImpact: number;
   why: string;
@@ -15,6 +16,7 @@ export const SECURITY_HEADER_DEFS: HeaderDefinition[] = [
     header: 'content-security-policy',
     label: 'Content-Security-Policy (CSP)',
     internalKey: 'SEC_HEADER_CSP',
+    normalizedIssueKey: 'SEC_HEADER_CSP',
     severity: 'MEDIUM',
     scoreImpact: 5,
     why: 'CSP prevents Cross-Site Scripting (XSS), data injection, and rogue script execution.',
@@ -24,15 +26,17 @@ export const SECURITY_HEADER_DEFS: HeaderDefinition[] = [
     header: 'strict-transport-security',
     label: 'Strict-Transport-Security (HSTS)',
     internalKey: 'SEC_HEADER_HSTS',
+    normalizedIssueKey: 'SEC_HEADER_HSTS',
     severity: 'LOW',
-    scoreImpact: 3,
+    scoreImpact: 4,
     why: 'HSTS instructs browsers to strictly communicate over HTTPS, protecting against SSL-stripping attacks.',
     recommendation: 'Add "Strict-Transport-Security: max-age=31536000; includeSubDomains" to all HTTPS responses.',
   },
   {
     header: 'x-frame-options',
     label: 'X-Frame-Options',
-    internalKey: 'SEC_HEADER_X_FRAME',
+    internalKey: 'SEC_HEADER_XFO',
+    normalizedIssueKey: 'SEC_HEADER_XFO',
     severity: 'LOW',
     scoreImpact: 3,
     why: 'X-Frame-Options protects users against clickjacking attacks by controlling whether the site can be embedded in iframes.',
@@ -41,27 +45,30 @@ export const SECURITY_HEADER_DEFS: HeaderDefinition[] = [
   {
     header: 'x-content-type-options',
     label: 'X-Content-Type-Options',
-    internalKey: 'SEC_HEADER_X_CONTENT_TYPE',
+    internalKey: 'SEC_HEADER_XCTO',
+    normalizedIssueKey: 'SEC_HEADER_XCTO',
     severity: 'LOW',
-    scoreImpact: 3,
+    scoreImpact: 2,
     why: 'X-Content-Type-Options: nosniff prevents MIME-type sniffing vulnerabilities in browsers.',
     recommendation: 'Add "X-Content-Type-Options: nosniff" to all HTTP responses.',
   },
   {
     header: 'referrer-policy',
     label: 'Referrer-Policy',
-    internalKey: 'SEC_HEADER_REFERRER',
+    internalKey: 'SEC_HEADER_RP',
+    normalizedIssueKey: 'SEC_HEADER_RP',
     severity: 'LOW',
-    scoreImpact: 3,
+    scoreImpact: 2,
     why: 'Referrer-Policy controls how much referrer information is sent along with requests, preventing sensitive data leakage.',
     recommendation: 'Add "Referrer-Policy: strict-origin-when-cross-origin" or "no-referrer-when-downgrade".',
   },
   {
     header: 'permissions-policy',
     label: 'Permissions-Policy',
-    internalKey: 'SEC_HEADER_PERMISSIONS',
+    internalKey: 'SEC_HEADER_PP',
+    normalizedIssueKey: 'SEC_HEADER_PP',
     severity: 'LOW',
-    scoreImpact: 3,
+    scoreImpact: 2,
     why: 'Permissions-Policy restricts access to sensitive browser features (camera, microphone, geolocation).',
     recommendation: 'Add a Permissions-Policy header disabling unused browser APIs (e.g. camera=(), microphone=(), geolocation=()).',
   },
@@ -89,6 +96,7 @@ export function scanSecurityHeaders(page: PageRecord, _context?: ScannerContext)
       findings.push({
         ruleId: 'LG-014',
         internalKey: def.internalKey,
+        normalizedIssueKey: def.normalizedIssueKey,
         category: 'SECURITY',
         scope: 'WEBSITE',
         severity: def.severity,
@@ -115,4 +123,26 @@ export function scanSecurityHeaders(page: PageRecord, _context?: ScannerContext)
     presentHeaders,
     missingHeaders,
   };
+}
+
+export function runSecurityHeadersScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanSecurityHeaders(page, context);
+    return {
+      scannerKey: 'SECURITY_HEADERS',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        presentHeaders: res.presentHeaders.join(','),
+        missingCount: res.missingHeaders.length,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'SECURITY_HEADERS',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

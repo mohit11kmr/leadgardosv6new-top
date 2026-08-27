@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface WhatsAppScanResult {
   findings: Finding[];
@@ -49,14 +49,13 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
       }
     }
 
-    // Clean digits and leading plus
-    const hasLeadingPlus = extractedPhone.startsWith('+');
     const digitsOnly = extractedPhone.replace(/\D/g, '');
 
     if (!digitsOnly || digitsOnly.length < 5) {
       findings.push({
         ruleId: 'LG-001',
         internalKey: 'WHATSAPP_MALFORMED',
+        normalizedIssueKey: 'WHATSAPP_MALFORMED',
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'HIGH',
@@ -80,14 +79,17 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
 
     // Check specific malformations
     let issueReason = '';
+    let normalizedIssueKey = 'WHATSAPP_MALFORMED';
     let recommendation = 'Use normalized international formatting (e.g., https://wa.me/919876543210).';
 
     if (countryMode === 'IN') {
       if (digitsOnly.startsWith('9191')) {
         issueReason = 'Duplicated +91 country code detected (e.g. +91 91...)';
+        normalizedIssueKey = 'WHATSAPP_DUPLICATE_COUNTRY_CODE';
         recommendation = 'Remove the duplicate 91 country code prefix.';
       } else if (digitsOnly.startsWith('0')) {
         issueReason = 'Leading 0 prefix detected before country or mobile digits.';
+        normalizedIssueKey = 'WHATSAPP_LEADING_ZERO';
         recommendation = 'Remove leading 0 and format with international country code +91.';
       } else if (!digitsOnly.startsWith('91')) {
         issueReason = 'Configured India mode expects a valid +91 country prefix.';
@@ -108,6 +110,7 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
       findings.push({
         ruleId: 'LG-001',
         internalKey: 'WHATSAPP_MALFORMED',
+        normalizedIssueKey,
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'HIGH',
@@ -136,4 +139,26 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
     hasWhatsAppLink: uniqueLinks.length > 0,
     validLinksCount,
   };
+}
+
+export function runWhatsAppScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanWhatsApp(page, context);
+    return {
+      scannerKey: 'WHATSAPP',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        totalLinks: res.hasWhatsAppLink ? res.validLinksCount + res.findings.length : 0,
+        validLinks: res.validLinksCount,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'WHATSAPP',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

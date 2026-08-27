@@ -24,7 +24,7 @@ export function calculateConversionRisk(findings: Finding[]): number {
   let totalRisk = 0;
 
   for (const finding of findings) {
-    const key = finding.internalKey ?? `${finding.ruleId}_${finding.title}`;
+    const key = finding.normalizedIssueKey ?? finding.internalKey ?? `${finding.ruleId}_${finding.title}`;
     if (seenRules.has(key)) {
       // Small fractional addition for multiple occurrences across distinct pages
       totalRisk += (SEVERITY_CONVERSION_RISK[finding.severity] ?? 0.01) * 0.25;
@@ -67,6 +67,12 @@ export function buildBusinessImpact(findings: Finding[], rawInputs: Partial<Impa
     confidence = 'MEDIUM';
   }
 
+  const assumptions = [
+    `Traffic (${monthlyVisitors.toLocaleString()} visitors/mo) and lead value (₹${averageLeadValue}) based on ${source === 'USER' ? 'verified workspace configuration' : 'standard industry baseline defaults'}.`,
+    `Estimated conversion risk (${(estimatedConversionRisk * 100).toFixed(1)}%) models cumulative visitor drop-off from identified conversion, tracking, and trust friction points.`,
+    'Calculations provide an opportunity loss model for prioritization rather than an accounting audit.',
+  ];
+
   return {
     kind: 'POTENTIAL_OPPORTUNITY_LOSS',
     confidence,
@@ -75,6 +81,7 @@ export function buildBusinessImpact(findings: Finding[], rawInputs: Partial<Impa
     estimatedLostOpportunities,
     estimatedOpportunityLoss,
     currency: 'INR',
+    assumptions,
     methodology:
       'Potential Opportunity Loss = Monthly Visitors × (Baseline Conversion Rate %) × Estimated Conversion Risk × Average Lead Value. Conversion risk reflects technical failure points identified during diagnostic analysis. Outputs represent potential opportunity loss models rather than guaranteed losses.',
   };

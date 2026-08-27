@@ -1,4 +1,13 @@
-import type { ScannerDefinition } from './types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerExecutableDefinition, ScannerResult } from './types.js';
+import {
+  runFormsScanner,
+  runMixedContentScanner,
+  runOpenGraphScanner,
+  runSecurityHeadersScanner,
+  runSeoScanner,
+  runTelephoneScanner,
+  runWhatsAppScanner,
+} from './scanners/index.js';
 
 export const featureNames = [
   '4-Pillar Diagnostic Scan',
@@ -57,7 +66,7 @@ export const featureRegistry = featureNames.map((name, index) => ({
   name,
 }));
 
-export const scannerRegistry: ScannerDefinition[] = [
+export const PAGE_SCANNERS: ScannerExecutableDefinition[] = [
   {
     internalKey: 'WHATSAPP',
     featureId: 'LG-001',
@@ -65,16 +74,9 @@ export const scannerRegistry: ScannerDefinition[] = [
     category: 'LEAD',
     scope: 'PAGE',
     severityPolicy: 'HIGH',
+    version: 'v3',
     enabled: true,
-  },
-  {
-    internalKey: 'WHATSAPP_SITE',
-    featureId: 'LG-001',
-    name: 'WhatsApp Site CTA Presence',
-    category: 'LEAD',
-    scope: 'WEBSITE',
-    severityPolicy: 'MEDIUM',
-    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runWhatsAppScanner(page, ctx),
   },
   {
     internalKey: 'TELEPHONE',
@@ -83,16 +85,9 @@ export const scannerRegistry: ScannerDefinition[] = [
     category: 'LEAD',
     scope: 'PAGE',
     severityPolicy: 'HIGH',
+    version: 'v3',
     enabled: true,
-  },
-  {
-    internalKey: 'TELEPHONE_SITE',
-    featureId: 'LG-003',
-    name: 'Click-to-Call Site CTA Presence',
-    category: 'LEAD',
-    scope: 'WEBSITE',
-    severityPolicy: 'LOW',
-    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runTelephoneScanner(page, ctx),
   },
   {
     internalKey: 'FORMS_CTA',
@@ -101,61 +96,20 @@ export const scannerRegistry: ScannerDefinition[] = [
     category: 'LEAD',
     scope: 'PAGE',
     severityPolicy: 'MEDIUM',
+    version: 'v3',
     enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runFormsScanner(page, ctx),
   },
   {
-    internalKey: 'FORMS_SITE',
-    featureId: 'LG-001',
-    name: 'Contact Form Site Presence',
-    category: 'LEAD',
-    scope: 'WEBSITE',
-    severityPolicy: 'MEDIUM',
-    enabled: true,
-  },
-  {
-    internalKey: 'META_PIXEL',
-    featureId: 'LG-006',
-    name: 'Meta Pixel Inspector',
-    category: 'ADVERTISING',
-    scope: 'WEBSITE',
-    severityPolicy: 'LOW',
-    enabled: true,
-  },
-  {
-    internalKey: 'GA4',
-    featureId: 'LG-007',
-    name: 'GA4 Analytics Probe',
-    category: 'ADVERTISING',
-    scope: 'WEBSITE',
-    severityPolicy: 'LOW',
-    enabled: true,
-  },
-  {
-    internalKey: 'GTM',
-    featureId: 'LG-007',
-    name: 'Google Tag Manager Probe',
-    category: 'ADVERTISING',
-    scope: 'WEBSITE',
-    severityPolicy: 'LOW',
-    enabled: true,
-  },
-  {
-    internalKey: 'NOINDEX',
+    internalKey: 'SEO',
     featureId: 'LG-010',
-    name: 'Google Indexing & Meta Robots Check',
+    name: 'Google Indexing & Canonical Scanner',
     category: 'SEO',
     scope: 'PAGE',
     severityPolicy: 'HIGH',
+    version: 'v3',
     enabled: true,
-  },
-  {
-    internalKey: 'CANONICAL',
-    featureId: 'LG-011',
-    name: 'Canonical Tag Scanner',
-    category: 'SEO',
-    scope: 'PAGE',
-    severityPolicy: 'HIGH',
-    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runSeoScanner(page, ctx),
   },
   {
     internalKey: 'OPENGRAPH',
@@ -164,16 +118,9 @@ export const scannerRegistry: ScannerDefinition[] = [
     category: 'SEO',
     scope: 'PAGE',
     severityPolicy: 'LOW',
+    version: 'v3',
     enabled: true,
-  },
-  {
-    internalKey: 'TLS',
-    featureId: 'LG-013',
-    name: 'SSL/TLS Certificate Validator',
-    category: 'SECURITY',
-    scope: 'WEBSITE',
-    severityPolicy: 'CRITICAL',
-    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runOpenGraphScanner(page, ctx),
   },
   {
     internalKey: 'MIXED_CONTENT',
@@ -181,16 +128,61 @@ export const scannerRegistry: ScannerDefinition[] = [
     name: 'Mixed Content Detector',
     category: 'SECURITY',
     scope: 'PAGE',
-    severityPolicy: 'MEDIUM',
+    severityPolicy: 'HIGH',
+    version: 'v3',
     enabled: true,
-  },
-  {
-    internalKey: 'SECURITY_HEADERS',
-    featureId: 'LG-014',
-    name: 'Security Headers Analyzer',
-    category: 'SECURITY',
-    scope: 'WEBSITE',
-    severityPolicy: 'MEDIUM',
-    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runMixedContentScanner(page, ctx),
   },
 ];
+
+class ScannerRegistryService {
+  private pageScanners = new Map<string, ScannerExecutableDefinition>();
+
+  constructor() {
+    for (const s of PAGE_SCANNERS) {
+      this.pageScanners.set(s.internalKey, s);
+    }
+  }
+
+  getEnabled(): ScannerExecutableDefinition[] {
+    return Array.from(this.pageScanners.values()).filter((s) => s.enabled);
+  }
+
+  get(key: string): ScannerExecutableDefinition | undefined {
+    return this.pageScanners.get(key);
+  }
+
+  register(scanner: ScannerExecutableDefinition) {
+    this.pageScanners.set(scanner.internalKey, scanner);
+  }
+
+  async runPageScanners(
+    page: PageRecord,
+    context?: ScannerContext
+  ): Promise<{ results: ScannerResult[]; findings: Finding[] }> {
+    const enabled = this.getEnabled();
+    const results: ScannerResult[] = [];
+    const findings: Finding[] = [];
+
+    for (const scanner of enabled) {
+      try {
+        const res = await Promise.resolve(scanner.run(page, context));
+        results.push(res);
+        if (res.findings?.length) {
+          findings.push(...res.findings);
+        }
+      } catch (error) {
+        results.push({
+          scannerKey: scanner.internalKey,
+          status: 'FAILED',
+          findings: [],
+          error: error instanceof Error ? error.message : 'Unknown scanner error',
+        });
+      }
+    }
+
+    return { results, findings };
+  }
+}
+
+export const scannerRegistry = new ScannerRegistryService();

@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface TelephoneScanResult {
   findings: Finding[];
@@ -22,6 +22,7 @@ export function scanTelephone(page: PageRecord, _context?: ScannerContext): Tele
       findings.push({
         ruleId: 'LG-003',
         internalKey: 'TEL_MALFORMED',
+        normalizedIssueKey: 'TEL_MALFORMED',
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'HIGH',
@@ -53,6 +54,7 @@ export function scanTelephone(page: PageRecord, _context?: ScannerContext): Tele
       findings.push({
         ruleId: 'LG-003',
         internalKey: 'TEL_MALFORMED',
+        normalizedIssueKey: 'TEL_MALFORMED',
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'HIGH',
@@ -82,6 +84,7 @@ export function scanTelephone(page: PageRecord, _context?: ScannerContext): Tele
       findings.push({
         ruleId: 'LG-003',
         internalKey: 'TEL_NON_NORMALIZED',
+        normalizedIssueKey: 'TEL_NON_NORMALIZED',
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'LOW',
@@ -110,4 +113,26 @@ export function scanTelephone(page: PageRecord, _context?: ScannerContext): Tele
     hasTelLink: uniqueTelLinks.length > 0,
     validLinksCount,
   };
+}
+
+export function runTelephoneScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanTelephone(page, context);
+    return {
+      scannerKey: 'TELEPHONE',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        totalLinks: res.hasTelLink ? res.validLinksCount + res.findings.length : 0,
+        validLinks: res.validLinksCount,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'TELEPHONE',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

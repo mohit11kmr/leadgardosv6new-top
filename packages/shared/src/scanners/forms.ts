@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export type FormDetectionState =
   | 'FORM_PRESENT'
@@ -108,4 +108,28 @@ export function scanFormsAndCtas(page: PageRecord, _context?: ScannerContext): F
     ctaCount,
     detectedStates,
   };
+}
+
+export function runFormsScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanFormsAndCtas(page, context);
+    return {
+      scannerKey: 'FORMS_CTA',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        hasForm: res.hasForm,
+        hasCta: res.hasCta,
+        formCount: res.formCount,
+        ctaCount: res.ctaCount,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'FORMS_CTA',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

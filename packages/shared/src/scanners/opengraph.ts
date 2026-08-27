@@ -1,4 +1,4 @@
-import type { Finding, PageRecord, ScannerContext } from '../types.js';
+import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
 export interface OpenGraphScanResult {
   findings: Finding[];
@@ -22,7 +22,6 @@ export function scanOpenGraph(page: PageRecord, _context?: ScannerContext): Open
   let hasTwitterCard = false;
 
   for (const property of requiredOgTags) {
-    // Find all meta tags with property="og:..." or name="og:..."
     const matches = [
       ...html.matchAll(new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']*)["']`, 'gi')),
       ...html.matchAll(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${property}["']`, 'gi')),
@@ -33,6 +32,7 @@ export function scanOpenGraph(page: PageRecord, _context?: ScannerContext): Open
       findings.push({
         ruleId: 'LG-012',
         internalKey: 'OPENGRAPH_MISSING',
+        normalizedIssueKey: 'OPENGRAPH_MISSING',
         category: 'SEO',
         scope: 'PAGE',
         severity: 'LOW',
@@ -59,6 +59,7 @@ export function scanOpenGraph(page: PageRecord, _context?: ScannerContext): Open
       findings.push({
         ruleId: 'LG-012',
         internalKey: 'OPENGRAPH_MALFORMED',
+        normalizedIssueKey: 'OPENGRAPH_MISSING',
         category: 'SEO',
         scope: 'PAGE',
         severity: 'LOW',
@@ -84,6 +85,7 @@ export function scanOpenGraph(page: PageRecord, _context?: ScannerContext): Open
         findings.push({
           ruleId: 'LG-012',
           internalKey: 'OPENGRAPH_MALFORMED',
+          normalizedIssueKey: 'OPENGRAPH_MISSING',
           category: 'SEO',
           scope: 'PAGE',
           severity: 'LOW',
@@ -123,4 +125,29 @@ export function scanOpenGraph(page: PageRecord, _context?: ScannerContext): Open
     hasOgUrl,
     hasTwitterCard,
   };
+}
+
+export function runOpenGraphScanner(page: PageRecord, context?: ScannerContext): ScannerResult {
+  try {
+    const res = scanOpenGraph(page, context);
+    return {
+      scannerKey: 'OPENGRAPH',
+      status: 'COMPLETED',
+      findings: res.findings,
+      metrics: {
+        hasOgTitle: res.hasOgTitle,
+        hasOgImage: res.hasOgImage,
+        hasOgDescription: res.hasOgDescription,
+        hasOgUrl: res.hasOgUrl,
+        hasTwitterCard: res.hasTwitterCard,
+      },
+    };
+  } catch (error) {
+    return {
+      scannerKey: 'OPENGRAPH',
+      status: 'FAILED',
+      findings: [],
+      error: error instanceof Error ? error.message : 'Unknown scanner error',
+    };
+  }
 }

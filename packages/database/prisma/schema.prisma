@@ -143,6 +143,7 @@ model Audit {
   findingsGenerated Int @default(0)
   businessImpact Json?
   executiveSummary Json?
+  telemetry Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -153,6 +154,7 @@ model Audit {
   score AuditScore?
   reports Report[]
   @@index([organizationId, createdAt])
+  @@index([websiteId, status])
   @@unique([organizationId, idempotencyKey])
 }
 model AuditPage {
@@ -186,6 +188,7 @@ model AuditRun {
   status AuditStatus @default(QUEUED)
   pagesFetched Int @default(0)
   findingsCount Int @default(0)
+  durationMs Int?
   errorCode String?
   startedAt DateTime?
   completedAt DateTime?
@@ -197,6 +200,8 @@ model AuditFinding {
   id String @id @default(uuid())
   auditId String
   ruleId String
+  internalKey String?
+  normalizedIssueKey String?
   category String
   scope FindingScope @default(PAGE)
   severity Severity
@@ -211,6 +216,8 @@ model AuditFinding {
   audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
   @@index([auditId, severity])
   @@index([auditId, scope])
+  @@index([auditId, category])
+  @@index([auditId, normalizedIssueKey])
 }
 model AuditScore {
   auditId String @id
