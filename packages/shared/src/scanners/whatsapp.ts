@@ -1,9 +1,18 @@
 import type { Finding, PageRecord, ScannerContext, ScannerResult } from '../types.js';
 
+export interface WhatsAppLinkInfo {
+  rawHref: string;
+  decodedHref: string;
+  extractedPhone?: string;
+  prefilledText?: string;
+  isValid: boolean;
+}
+
 export interface WhatsAppScanResult {
   findings: Finding[];
   hasWhatsAppLink: boolean;
   validLinksCount: number;
+  links: WhatsAppLinkInfo[];
 }
 
 export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsAppScanResult {
@@ -17,6 +26,7 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
   const uniqueLinks = [...new Set(rawLinks)];
 
   let validLinksCount = 0;
+  const linksInfo: WhatsAppLinkInfo[] = [];
 
   for (const rawLink of uniqueLinks) {
     let decodedLink = rawLink;
@@ -26,12 +36,21 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
       // Keep raw if malformed encoding
     }
 
-    // Robust phone number extraction from URL path or query params
+    // Robust phone number & prefilled text extraction from URL path or query params
     let extractedPhone = '';
+    let prefilledText = '';
+
     try {
-      const parsedUrl = new URL(decodedLink.startsWith('whatsapp://') ? `https://wa.me/${decodedLink.replace('whatsapp://', '')}` : decodedLink);
+      const parsedUrl = new URL(
+        decodedLink.startsWith('whatsapp://')
+          ? `https://wa.me/${decodedLink.replace('whatsapp://', '')}`
+          : decodedLink
+      );
       // Check query param 'phone'
       const phoneParam = parsedUrl.searchParams.get('phone');
+      const textParam = parsedUrl.searchParams.get('text');
+      if (textParam) prefilledText = textParam;
+
       if (phoneParam) {
         extractedPhone = phoneParam.trim();
       } else {
@@ -47,11 +66,17 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
       if (match?.[1]) {
         extractedPhone = match[1];
       }
+      const textMatch = decodedLink.match(/[?&]text=([^&]+)/i);
+      if (textMatch?.[1]) {
+        prefilledText = textMatch[1];
+      }
     }
 
     const digitsOnly = extractedPhone.replace(/\D/g, '');
+    let isValid = true;
 
     if (!digitsOnly || digitsOnly.length < 5) {
+      isValid = false;
       findings.push({
         ruleId: 'LG-001',
         internalKey: 'WHATSAPP_MALFORMED',
@@ -59,85 +84,95 @@ export function scanWhatsApp(page: PageRecord, context?: ScannerContext): WhatsA
         category: 'LEAD',
         scope: 'PAGE',
         severity: 'HIGH',
-        title: 'WhatsApp link contains empty or invalid phone number',
-        description: `The WhatsApp link "${rawLink.slice(0, 100)}" does not contain a valid phone number.`,
+        title: 'WhatsApp link is missing a valid destination phone number',
+        description: `Found an empty or invalid WhatsApp link without a usable telephone number: "${rawLink.slice(0, 80)}"`,
         affectedUrl: page.url,
         evidence: {
-          source: 'href',
-          observed: rawLink.slice(0, 150),
+          source: 'a[href*="whatsapp"]',
+          observed: rawLink,
           location: page.url,
-          why: 'Missing or unparseable phone digits in WhatsApp link',
-          recommendation: 'Specify a complete international phone number in the WhatsApp link.',
+          why: 'An empty or non-numeric WhatsApp destination link fails to open a conversation window, losing the prospective lead.',
+          recommendation: 'Specify a valid destination phone number with country code (e.g., https://wa.me/919876543210).',
           metadata: { rawLink, extractedPhone },
         },
-        recommendation: 'Ensure all WhatsApp links include a valid international mobile number.',
+        recommendation: 'Update the WhatsApp link to include your full verified business telephone number.',
         scoreImpact: 18,
-        businessImpact: 'Visitors tapping WhatsApp will fail to initiate conversation, leading to lost inquiries.',
-      });
-      continue;
-    }
-
-    // Check specific malformations
-    let issueReason = '';
-    let normalizedIssueKey = 'WHATSAPP_MALFORMED';
-    let recommendation = 'Use normalized international formatting (e.g., https://wa.me/919876543210).';
-
-    if (countryMode === 'IN') {
-      if (digitsOnly.startsWith('9191')) {
-        issueReason = 'Duplicated +91 country code detected (e.g. +91 91...)';
-        normalizedIssueKey = 'WHATSAPP_DUPLICATE_COUNTRY_CODE';
-        recommendation = 'Remove the duplicate 91 country code prefix.';
-      } else if (digitsOnly.startsWith('0')) {
-        issueReason = 'Leading 0 prefix detected before country or mobile digits.';
-        normalizedIssueKey = 'WHATSAPP_LEADING_ZERO';
-        recommendation = 'Remove leading 0 and format with international country code +91.';
-      } else if (!digitsOnly.startsWith('91')) {
-        issueReason = 'Configured India mode expects a valid +91 country prefix.';
-        recommendation = 'Prefix Indian mobile numbers with the 91 country code.';
-      } else if (!/^91[6-9]\d{9}$/.test(digitsOnly)) {
-        issueReason = 'Number is not a valid 10-digit Indian mobile format (must start with 6-9).';
-        recommendation = 'Verify the 10-digit Indian mobile number starts with 6, 7, 8, or 9.';
-      }
-    } else {
-      // Global mode validation: standard E.164 length (7 to 15 digits)
-      if (digitsOnly.length < 7 || digitsOnly.length > 15) {
-        issueReason = `Invalid phone number length (${digitsOnly.length} digits). Standard international numbers are 7 to 15 digits.`;
-        recommendation = 'Format the phone number with valid international country code (E.164).';
-      }
-    }
-
-    if (issueReason) {
-      findings.push({
-        ruleId: 'LG-001',
-        internalKey: 'WHATSAPP_MALFORMED',
-        normalizedIssueKey,
-        category: 'LEAD',
-        scope: 'PAGE',
-        severity: 'HIGH',
-        title: 'WhatsApp number appears malformed',
-        description: issueReason,
-        affectedUrl: page.url,
-        evidence: {
-          source: 'href',
-          observed: rawLink.slice(0, 150),
-          location: page.url,
-          why: issueReason,
-          recommendation,
-          metadata: { rawLink, extractedPhone, digitsOnly, countryMode },
-        },
-        recommendation,
-        scoreImpact: 18,
-        businessImpact: 'Prospective leads clicking the WhatsApp CTA will encounter a broken or misrouted chat window.',
+        businessImpact: 'Visitors tapping the WhatsApp button encounter an error rather than initiating a conversation.',
       });
     } else {
-      validLinksCount += 1;
+      // Check 1: Leading 0 before number (e.g. wa.me/0919876543210 or wa.me/09876543210)
+      if (extractedPhone.startsWith('0')) {
+        isValid = false;
+        findings.push({
+          ruleId: 'LG-001',
+          internalKey: 'WHATSAPP_LEADING_ZERO',
+          normalizedIssueKey: 'WHATSAPP_LEADING_ZERO',
+          category: 'LEAD',
+          scope: 'PAGE',
+          severity: 'HIGH',
+          title: 'WhatsApp number contains an invalid leading zero prefix',
+          description: `The WhatsApp link "${rawLink.slice(0, 80)}" includes a leading 0 ("${extractedPhone}"). WhatsApp requires international format without leading zeros.`,
+          affectedUrl: page.url,
+          evidence: {
+            source: 'a[href*="whatsapp"]',
+            observed: rawLink,
+            location: page.url,
+            why: 'Leading 0 prefix breaks WhatsApp direct routing: WhatsApp API cannot resolve phone numbers prefixed with trunk prefix 0, causing the chat window to fail.',
+            recommendation: `Remove the leading 0 (e.g. use "https://wa.me/${digitsOnly.replace(/^0+/, '')}").`,
+            metadata: { rawLink, extractedPhone },
+          },
+          recommendation: 'Remove the leading zero from the WhatsApp phone number parameter.',
+          scoreImpact: 18,
+          businessImpact: 'Mobile visitors tapping the link receive "Phone number shared via url is invalid".',
+        });
+      }
+
+      // Check 2: Duplicated country code (e.g. wa.me/91919876543210 for IN mode)
+      if (countryMode === 'IN' && digitsOnly.startsWith('9191') && digitsOnly.length >= 14) {
+        isValid = false;
+        findings.push({
+          ruleId: 'LG-001',
+          internalKey: 'WHATSAPP_DUPLICATE_CC',
+          normalizedIssueKey: 'WHATSAPP_DUPLICATE_CC',
+          category: 'LEAD',
+          scope: 'PAGE',
+          severity: 'HIGH',
+          title: 'WhatsApp number contains a duplicated country code prefix',
+          description: `The WhatsApp link "${rawLink.slice(0, 80)}" duplicates the country code (+91+91), corrupting the telephone destination.`,
+          affectedUrl: page.url,
+          evidence: {
+            source: 'a[href*="whatsapp"]',
+            observed: rawLink,
+            location: page.url,
+            why: 'Duplicated +91 country prefix causes number resolution failure: Double country prefix creates an invalid 14-digit number that does not route to any subscriber.',
+            recommendation: `Remove the extra +91 prefix (e.g. "https://wa.me/${digitsOnly.slice(2)}").`,
+            metadata: { rawLink, extractedPhone },
+          },
+          recommendation: 'Remove duplicate country prefix to restore instant WhatsApp routing.',
+          scoreImpact: 18,
+          businessImpact: 'Inbound WhatsApp leads are sent to an invalid recipient number and lost permanently.',
+        });
+      }
+
+      if (isValid) {
+        validLinksCount += 1;
+      }
     }
+
+    linksInfo.push({
+      rawHref: rawLink,
+      decodedHref: decodedLink,
+      extractedPhone,
+      prefilledText,
+      isValid,
+    });
   }
 
   return {
     findings,
     hasWhatsAppLink: uniqueLinks.length > 0,
     validLinksCount,
+    links: linksInfo,
   };
 }
 
@@ -149,8 +184,9 @@ export function runWhatsAppScanner(page: PageRecord, context?: ScannerContext): 
       status: 'COMPLETED',
       findings: res.findings,
       metrics: {
-        totalLinks: res.hasWhatsAppLink ? res.validLinksCount + res.findings.length : 0,
-        validLinks: res.validLinksCount,
+        hasWhatsAppLink: res.hasWhatsAppLink,
+        validLinksCount: res.validLinksCount,
+        totalLinksCount: res.links.length,
       },
     };
   } catch (error) {

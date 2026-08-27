@@ -6,3 +6,4 @@ export * from './priority.js';
 export * from './registry.js';
 export * from './url-security.js';
 export * from './scanners/index.js';
+export * from './intelligence/index.js';
