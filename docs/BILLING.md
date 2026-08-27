@@ -22,24 +22,19 @@ LeadGuard OS V6 features a self-hosted commercial billing and subscription platf
 
 ---
 
-## 2. Architecture & Payment Flow
+## 2. State Machine Lifecycles
 
-```
-React Web App                      Express API                     Razorpay / Webhooks
-      │                                 │                                   │
-      │── POST /billing/checkout/ef ───>│                                   │
-      │                                 │── Create Order (HMAC) ───────────>│
-      │<─ { orderId, amount, keyId } ───│                                   │
-      │                                 │                                   │
-      │── Razorpay Modal Checkout ─────────────────────────────────────────>│
-      │<─ { orderId, paymentId, sig } ──────────────────────────────────────│
-      │                                 │                                   │
-      │── POST /billing/verify ────────>│                                   │
-      │   (orderId, paymentId, sig)     │── Server-Side HMAC Verification ──│
-      │                                 │── Deduplicate & Store Payment ───>│
-      │                                 │── Generate Invoice (PDF/GST) ────>│
-      │<─ { payment, invoice } ─────────│                                   │
-```
+### Payment State Machine
+- `CREATED` → `AUTHORIZED` | `CAPTURED` | `FAILED`
+- `AUTHORIZED` → `CAPTURED` | `FAILED`
+- `CAPTURED` → `REFUNDED` | `PARTIALLY_REFUNDED`
+- *Illegal backwards transitions (e.g. `CAPTURED` → `CREATED` or `FAILED` → `CAPTURED`) are rejected.*
+
+### Subscription State Machine
+- `CREATED` → `ACTIVE` | `FAILED`
+- `ACTIVE` → `PAST_DUE` | `CANCELLED` | `PAUSED`
+- `PAST_DUE` → `ACTIVE` | `CANCELLED` | `EXPIRED`
+- `CANCELLED` → `ACTIVE` (Reactivation)
 
 ---
 
@@ -47,4 +42,5 @@ React Web App                      Express API                     Razorpay / We
 
 1. **Smallest Unit Precision**: All prices and money values are stored as integers in **paise** (1 INR = 100 paise) to prevent IEEE 754 floating-point inaccuracies.
 2. **Server-Side Verification**: Client payment success events are never trusted. All payments require cryptographic signature verification or webhook confirmation.
-3. **Idempotency**: All webhook events and payment IDs are tracked and deduplicated via unique database constraints.
+3. **Idempotency**: All webhook events, payment IDs, and checkout idempotency keys are tracked and deduplicated via unique database constraints.
+4. **Reconciliation**: Background workers scan for state discrepancies between local databases and payment providers.

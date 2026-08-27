@@ -62,7 +62,7 @@ export function createRedisRateLimiter(options: {
 export const authLimiter = createRedisRateLimiter({
   keyPrefix: 'auth',
   windowMs: 60 * 1000,
-  limit: 20,
+  limit: config.AUTH_RATE_LIMIT,
   message: 'Too many authentication attempts. Please try again later.',
 });
 
@@ -83,20 +83,20 @@ export const emailVerificationLimiter = createRedisRateLimiter({
 export const auditCreationLimiter = createRedisRateLimiter({
   keyPrefix: 'audit_creation',
   windowMs: 60 * 1000,
-  limit: 30,
+  limit: config.AUDIT_RATE_LIMIT,
   message: 'Audit execution rate limit reached for this window.',
 });
 
 export const apiLimiter = createRedisRateLimiter({
   keyPrefix: 'general_api',
   windowMs: 60 * 1000,
-  limit: 150,
+  limit: config.API_RATE_LIMIT,
   message: 'API rate limit exceeded.',
 });
 
 export const webhookLimiter = createRedisRateLimiter({
   keyPrefix: 'webhook',
   windowMs: 60 * 1000,
-  limit: 100,
+  limit: config.WEBHOOK_RATE_LIMIT,
   message: 'Webhook rate limit exceeded.',
 });

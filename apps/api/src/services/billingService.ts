@@ -91,6 +91,26 @@ export const DEFAULT_COMMERCIAL_PLANS = [
   },
 ];
 
+// Valid Payment state transitions
+const VALID_PAYMENT_TRANSITIONS: Record<string, string[]> = {
+  CREATED: ['AUTHORIZED', 'CAPTURED', 'FAILED'],
+  AUTHORIZED: ['CAPTURED', 'FAILED'],
+  CAPTURED: ['REFUNDED', 'PARTIALLY_REFUNDED'],
+  FAILED: [],
+  REFUNDED: [],
+  PARTIALLY_REFUNDED: ['REFUNDED'],
+};
+
+// Valid Subscription state transitions
+const VALID_SUBSCRIPTION_TRANSITIONS: Record<string, string[]> = {
+  CREATED: ['ACTIVE', 'FAILED'],
+  ACTIVE: ['PAST_DUE', 'CANCELLED', 'PAUSED'],
+  PAST_DUE: ['ACTIVE', 'CANCELLED', 'EXPIRED'],
+  PAUSED: ['ACTIVE', 'CANCELLED'],
+  CANCELLED: ['ACTIVE'],
+  EXPIRED: [],
+};
+
 export class BillingService {
   async ensurePlansSeeded() {
     for (const plan of DEFAULT_COMMERCIAL_PLANS) {
@@ -160,15 +180,45 @@ export class BillingService {
   }
 
   /**
-   * One-Time Express Fix Checkout (₹2,999)
+   * One-Time Express Fix Checkout (₹2,999 = 299900 paise) with Idempotency Key
    */
   async createExpressFixCheckout(
     organizationId: string,
     userId: string,
     websiteId: string,
-    auditId?: string
+    auditId?: string,
+    idempotencyKey?: string
   ) {
-    const amountInPaise = 299900; // ₹2,999
+    const amountInPaise = 299900; // Authoritative server-side price (₹2,999)
+
+    // Idempotency: return existing order if same key was provided recently
+    if (idempotencyKey) {
+      const existingEvent = await db.billingEvent.findFirst({
+        where: {
+          organizationId,
+          type: 'ORDER_CREATED',
+          providerEventId: idempotencyKey,
+        },
+      });
+
+      if (existingEvent && existingEvent.data) {
+        const orderData = existingEvent.data as {
+          orderId: string;
+          amount: number;
+          currency: string;
+          keyId: string;
+        };
+        return {
+          orderId: orderData.orderId,
+          amount: orderData.amount,
+          currency: orderData.currency,
+          keyId: orderData.keyId,
+          purpose: 'EXPRESS_FIX',
+          reused: true,
+        };
+      }
+    }
+
     const orderResult = await razorpayProvider.createOrder({
       amountInPaise,
       currency: 'INR',
@@ -180,10 +230,12 @@ export class BillingService {
       data: {
         organizationId,
         type: 'ORDER_CREATED',
-        providerEventId: orderResult.orderId,
+        providerEventId: idempotencyKey || orderResult.orderId,
         data: {
+          orderId: orderResult.orderId,
           amount: amountInPaise,
           currency: 'INR',
+          keyId: orderResult.keyId,
           purpose: 'EXPRESS_FIX',
           websiteId,
           auditId,
@@ -214,7 +266,7 @@ export class BillingService {
       auditId?: string;
     }
   ) {
-    // 1. Verify cryptographic signature from Razorpay
+    // 1. Verify cryptographic signature
     const isValid = razorpayProvider.verifyPaymentSignature({
       orderId: input.orderId,
       paymentId: input.paymentId,
@@ -240,7 +292,7 @@ export class BillingService {
 
     // 3. Create Payment & Invoice record
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
-    const amountInPaise = 299900;
+    const amountInPaise = 299900; // Authoritative price
 
     const [payment, invoice] = await db.$transaction([
       db.payment.create({
@@ -312,7 +364,7 @@ export class BillingService {
     const currentPeriodStart = new Date();
     const currentPeriodEnd = new Date(Date.now() + 30 * 86400000);
 
-    // Upsert subscription state
+    // Create subscription record
     const subscription = await db.subscription.create({
       data: {
         organizationId,
@@ -371,6 +423,22 @@ export class BillingService {
   }
 
   /**
+   * Validate Payment state transition
+   */
+  isValidPaymentTransition(from: string, to: string): boolean {
+    const allowed = VALID_PAYMENT_TRANSITIONS[from];
+    return Array.isArray(allowed) && allowed.includes(to);
+  }
+
+  /**
+   * Validate Subscription state transition
+   */
+  isValidSubscriptionTransition(from: string, to: string): boolean {
+    const allowed = VALID_SUBSCRIPTION_TRANSITIONS[from];
+    return Array.isArray(allowed) && allowed.includes(to);
+  }
+
+  /**
    * Idempotent Webhook Handler for Razorpay
    */
   async handleRazorpayWebhook(
@@ -378,7 +446,7 @@ export class BillingService {
     signature: string,
     eventPayload: Record<string, unknown>
   ) {
-    // 1. Verify HMAC Webhook signature
+    // 1. Verify HMAC Webhook signature against raw bytes
     const isValid = razorpayProvider.verifyWebhookSignature({
       rawBody,
       signature,

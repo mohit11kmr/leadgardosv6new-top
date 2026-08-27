@@ -5,8 +5,8 @@ import { app } from '../../apps/api/src/server.js';
 import { createAccessToken } from '../../apps/api/src/auth.js';
 import { razorpayProvider } from '../../apps/api/src/billing/razorpayProvider.js';
 
-describe('Billing: Express Fix Checkout & Verification (Requirement 10, 13, 38)', () => {
-  it('creates Express Fix order, verifies server-side HMAC signature, and rejects duplicate payments', async () => {
+describe('Billing: Express Fix Checkout & Verification (Requirement 10, 13, 24, 25, 38)', () => {
+  it('creates Express Fix order, supports idempotency keys, verifies HMAC signatures, and prevents duplicate payments', async () => {
     // 1. Setup Organization & Owner
     const org = await db.organization.create({
       data: { name: 'Express Fix Org', slug: `ef-org-${Date.now()}` },
@@ -29,25 +29,37 @@ describe('Billing: Express Fix Checkout & Verification (Requirement 10, 13, 38)'
       },
     });
 
-    // 2. Initiate Express Fix Checkout
-    const orderRes = await request(app)
+    const idempotencyKey = `idem_${Date.now()}`;
+
+    // 2. Initiate Express Fix Checkout with Idempotency Key
+    const orderRes1 = await request(app)
       .post('/api/v1/billing/checkout/express-fix')
       .set('Authorization', `Bearer ${token}`)
-      .send({ websiteId: website.id });
+      .send({ websiteId: website.id, idempotencyKey });
 
-    expect(orderRes.status).toBe(201);
-    expect(orderRes.body.success).toBe(true);
-    expect(orderRes.body.data.amount).toBe(299900); // ₹2,999
-    expect(orderRes.body.data.currency).toBe('INR');
-    const orderId = orderRes.body.data.orderId;
-    expect(orderId).toBeDefined();
+    expect(orderRes1.status).toBe(201);
+    expect(orderRes1.body.success).toBe(true);
+    expect(orderRes1.body.data.amount).toBe(299900); // Server-authoritative ₹2,999
+    expect(orderRes1.body.data.currency).toBe('INR');
+    const orderId1 = orderRes1.body.data.orderId;
+    expect(orderId1).toBeDefined();
 
-    // 3. Attempt verification with invalid signature -> Fails (400 / 500)
+    // 2b. Repeated request with same idempotency key returns existing order
+    const orderRes2 = await request(app)
+      .post('/api/v1/billing/checkout/express-fix')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ websiteId: website.id, idempotencyKey });
+
+    expect(orderRes2.status).toBe(201);
+    expect(orderRes2.body.data.orderId).toBe(orderId1);
+    expect(orderRes2.body.data.reused).toBe(true);
+
+    // 3. Attempt verification with invalid signature -> Fails (500)
     const invalidVerifyRes = await request(app)
       .post('/api/v1/billing/checkout/express-fix/verify')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        orderId,
+        orderId: orderId1,
         paymentId: `pay_${Date.now()}`,
         signature: 'invalid_signature_hex',
         websiteId: website.id,
@@ -57,13 +69,13 @@ describe('Billing: Express Fix Checkout & Verification (Requirement 10, 13, 38)'
 
     // 4. Verify with valid HMAC-SHA256 signature -> Succeeds (200)
     const paymentId = `pay_${Date.now()}`;
-    const validSignature = razorpayProvider.generateTestPaymentSignature(orderId, paymentId);
+    const validSignature = razorpayProvider.generateTestPaymentSignature(orderId1, paymentId);
 
     const verifyRes = await request(app)
       .post('/api/v1/billing/checkout/express-fix/verify')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        orderId,
+        orderId: orderId1,
         paymentId,
         signature: validSignature,
         websiteId: website.id,
@@ -80,7 +92,7 @@ describe('Billing: Express Fix Checkout & Verification (Requirement 10, 13, 38)'
       .post('/api/v1/billing/checkout/express-fix/verify')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        orderId,
+        orderId: orderId1,
         paymentId,
         signature: validSignature,
         websiteId: website.id,

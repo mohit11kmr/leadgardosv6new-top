@@ -92,7 +92,14 @@ apiRouter.post('/webhooks/razorpay', webhookLimiter, async (request: AuthRequest
       });
     }
 
-    const rawBody = request.rawBody || JSON.stringify(request.body);
+    const rawBody = request.rawBody;
+    if (!rawBody) {
+      return response.status(500).json({
+        success: false,
+        error: { code: 'RAW_BODY_UNAVAILABLE', message: 'Webhook raw request body was not captured' },
+      });
+    }
+
     const result = await billingService.handleRazorpayWebhook(rawBody, signature, request.body);
     response.status(200).json({ success: true, data: result });
   } catch (error) {
@@ -513,6 +520,7 @@ apiRouter.post('/billing/checkout/express-fix', requirePermission('BILLING_MANAG
       .object({
         websiteId: z.string().uuid(),
         auditId: z.string().uuid().optional(),
+        idempotencyKey: z.string().max(100).optional(),
       })
       .parse(request.body);
 
@@ -520,7 +528,8 @@ apiRouter.post('/billing/checkout/express-fix', requirePermission('BILLING_MANAG
       request.auth!.organizationId,
       request.auth!.sub,
       input.websiteId,
-      input.auditId
+      input.auditId,
+      input.idempotencyKey
     );
     response.status(201).json({ success: true, data: order });
   } catch (error) {
