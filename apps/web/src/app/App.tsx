@@ -35,6 +35,13 @@ import { NotificationSettingsView } from '../features/settings/NotificationSetti
 import { SecuritySettingsView } from '../features/settings/SecuritySettingsView.js';
 import { TestimonialsView } from '../features/testimonials/TestimonialsView.js';
 
+import {
+  PrivacyPolicyView,
+  TermsOfServiceView,
+  CookiePolicyView,
+  RefundPolicyView,
+} from '../features/legal/LegalViews.js';
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
   if (!authenticated) {
@@ -49,6 +56,12 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Public Legal & Policy Pages */}
+        <Route path="/privacy" element={<PrivacyPolicyView />} />
+        <Route path="/terms" element={<TermsOfServiceView />} />
+        <Route path="/cookies" element={<CookiePolicyView />} />
+        <Route path="/refund" element={<RefundPolicyView />} />
+
         <Route
           path="/login"
           element={
