@@ -1,5 +1,23 @@
-import 'dotenv/config'; import express from 'express'; import cors from 'cors'; import helmet from 'helmet'; import rateLimit from 'express-rate-limit'; import {Redis} from 'ioredis'; import {randomUUID} from 'node:crypto'; import {config} from '@leadguard/config'; import {db} from '@leadguard/database';
-import {apiRouter} from './routes.js';
-export const app=express(); app.use((req,res,next)=>{const id=req.header('x-request-id')??randomUUID();res.setHeader('x-request-id',id);const started=Date.now();res.on('finish',()=>console.log(JSON.stringify({timestamp:new Date().toISOString(),level:'info',service:'api',requestId:id,route:req.path,method:req.method,status:res.statusCode,duration:Date.now()-started})));next();}); app.use(helmet()); app.use(cors({origin:config.CORS_ORIGINS.split(',').map((value:string)=>value.trim()),credentials:true})); app.use(express.json({limit:'1mb'})); app.use(rateLimit({windowMs:60000,limit:100,standardHeaders:'draft-7'}));
-const redis=new Redis(config.REDIS_URL); app.get('/health',(_,res)=>res.json({success:true,data:{status:'ok'}})); app.get('/ready',async(req,res)=>{try{await db.$queryRaw`SELECT 1`;await redis.ping();res.json({success:true,data:{status:'ready',postgres:'ok',redis:'ok'}})}catch{res.status(503).json({success:false,error:{code:'NOT_READY',message:'Dependencies unavailable',requestId:req.header('x-request-id')??''}})}}); app.get('/api/v1',(_,res)=>res.json({success:true,data:{name:'LeadGuard OS API',version:'v1'}})); app.use((error:unknown,req:express.Request,res:express.Response,_next:express.NextFunction)=>{console.error(JSON.stringify({level:'error',service:'api',requestId:req.header('x-request-id'),error:error instanceof Error?error.message:'unknown'}));res.status(500).json({success:false,error:{code:'INTERNAL_ERROR',message:'An unexpected error occurred',requestId:req.header('x-request-id')??''}})}); if(config.NODE_ENV!=='test')app.listen(config.PORT,()=>console.log(`LeadGuard API listening on ${config.PORT}`));
-app.use('/api/v1', apiRouter); app.get('/api/v1',(_,res)=>res.json({success:true,data:{name:'LeadGuard OS API',version:'v1'}})); app.use((error:unknown,req:express.Request,res:express.Response,_next:express.NextFunction)=>{console.error(JSON.stringify({level:'error',service:'api',requestId:req.header('x-request-id'),error:error instanceof Error?error.message:'unknown'}));res.status(500).json({success:false,error:{code:'INTERNAL_ERROR',message:'An unexpected error occurred',requestId:req.header('x-request-id')??''}})}); if(config.NODE_ENV!=='test')app.listen(config.PORT,()=>console.log(`LeadGuard API listening on ${config.PORT}`));
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { Redis } from 'ioredis';
+import { randomUUID } from 'node:crypto';
+import { config } from '@leadguard/config';
+import { db } from '@leadguard/database';
+import { apiRouter } from './routes.js';
+
+export const app = express();
+const redis = new Redis(config.REDIS_URL);
+app.use((request, response, next) => { const requestId = request.header('x-request-id') ?? randomUUID(); response.setHeader('x-request-id', requestId); const startedAt = Date.now(); response.on('finish', () => console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: 'info', service: 'api', requestId, route: request.path, method: request.method, status: response.statusCode, duration: Date.now() - startedAt }))); next(); });
+app.use(helmet());
+app.use(cors({ origin: config.CORS_ORIGINS.split(',').map((value) => value.trim()), credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: 'draft-7' }));
+app.get('/health', (_request, response) => response.json({ success: true, data: { status: 'ok' } }));
+app.get('/ready', async (request, response) => { try { await db.$queryRaw`SELECT 1`; await redis.ping(); response.json({ success: true, data: { status: 'ready', postgres: 'ok', redis: 'ok' } }); } catch { response.status(503).json({ success: false, error: { code: 'NOT_READY', message: 'Dependencies unavailable', requestId: request.header('x-request-id') ?? '' } }); } });
+app.use('/api/v1', apiRouter);
+app.use((error: unknown, request: express.Request, response: express.Response, _next: express.NextFunction) => { const validation = error instanceof Error && error.name === 'ZodError'; console.error(JSON.stringify({ level: 'error', service: 'api', requestId: request.header('x-request-id'), error: error instanceof Error ? error.message : 'unknown' })); response.status(validation ? 400 : 500).json({ success: false, error: { code: validation ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR', message: validation ? 'Request validation failed' : 'An unexpected error occurred', requestId: request.header('x-request-id') ?? '' } }); });
+if (config.NODE_ENV !== 'test') app.listen(config.PORT, () => console.log(`LeadGuard API listening on ${config.PORT}`));
