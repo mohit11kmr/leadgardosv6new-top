@@ -1,0 +1,1 @@
+import {describe,it,expect} from 'vitest'; import {validateExternalUrl} from './security.js'; describe('SSRF protection',()=>{it('rejects local targets',async()=>{await expect(validateExternalUrl('http://127.0.0.1')).rejects.toThrow();await expect(validateExternalUrl('http://[::1]')).rejects.toThrow();await expect(validateExternalUrl('file:///etc/passwd')).rejects.toThrow()})});

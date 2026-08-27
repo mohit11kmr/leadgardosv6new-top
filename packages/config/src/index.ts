@@ -1,0 +1,2 @@
+import { z } from 'zod';
+export const config = z.object({NODE_ENV:z.enum(['development','test','production']).default('development'),DATABASE_URL:z.string().url(),REDIS_URL:z.string().url(),JWT_SECRET:z.string().min(32),REFRESH_TOKEN_SECRET:z.string().min(32),APP_URL:z.string().url(),API_URL:z.string().url(),CORS_ORIGINS:z.string().default('http://localhost:5173'),PORT:z.coerce.number().int().positive().default(4000)}).parse(process.env);
