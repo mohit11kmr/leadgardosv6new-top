@@ -21,6 +21,9 @@ export const config = z
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+    // Monitoring Configurations
+    MONITOR_CRAWL_CONCURRENCY: z.coerce.number().int().positive().max(10).default(3),
+    MONITOR_MANUAL_RUN_RATE_LIMIT: z.coerce.number().positive().default(10),
     // Rate Limiting Configurations
     AUTH_RATE_LIMIT: z.coerce.number().positive().default(20),
     AUDIT_RATE_LIMIT: z.coerce.number().positive().default(30),

@@ -418,9 +418,11 @@ model MonitoringConfig {
   responseTimeThresholdMs Int                 @default(3000)
   tlsExpiryThresholdDays  Int                 @default(14)
   lockedUntil             DateTime?
+  lockToken               String?
   healthChecks            Json?
   alertPolicy             Json?
   baseline                Json?
+  baselineVersion         Int                 @default(1)
   lastRunAt               DateTime?
   nextRunAt               DateTime?
   archivedAt              DateTime?
@@ -520,6 +522,7 @@ model MonitoringAlert {
   config             MonitoringConfig? @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
   run                MonitoringRun?    @relation(fields: [monitoringRunId], references: [id], onDelete: SetNull)
 
+  @@unique([monitoringConfigId, fingerprint, status])
   @@index([organizationId, status])
   @@index([monitoringConfigId, fingerprint])
 }

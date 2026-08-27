@@ -748,8 +748,21 @@ apiRouter.post('/monitoring/:id/alerts/:alertId/ack', requirePermission('MONITOR
 apiRouter.post('/monitoring/:id/run', requirePermission('MONITOR_RUN'), async (request: AuthRequest, response, next) => {
   try {
     const res = await monitoringService.triggerManualRun(request.auth!.organizationId, request.params.id);
+    if (!res.enqueued) {
+      const statusCode = res.status === 'MONITOR_RUN_IN_PROGRESS' ? 409 : 429;
+      return response.status(statusCode).json({
+        success: false,
+        error: { code: res.status, message: res.message, requestId: requestId(request) },
+      });
+    }
     response.status(202).json({ success: true, data: res });
   } catch (error) {
+    if (error instanceof Error && (error as { code?: string }).code === 'RATE_LIMIT_EXCEEDED') {
+      return response.status(429).json({
+        success: false,
+        error: { code: 'RATE_LIMIT_EXCEEDED', message: error.message, requestId: requestId(request) },
+      });
+    }
     next(error);
   }
 });

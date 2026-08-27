@@ -14,6 +14,13 @@ const PLAN_MONITOR_LIMITS: Record<string, number> = {
   ENTERPRISE: 100,
 };
 
+const PLAN_RESOURCE_CAPS: Record<string, { maxPages: number; maxDepth: number; maxConcurrentRuns: number }> = {
+  FREE: { maxPages: 0, maxDepth: 0, maxConcurrentRuns: 0 },
+  PRO: { maxPages: 10, maxDepth: 2, maxConcurrentRuns: 2 },
+  AGENCY: { maxPages: 25, maxDepth: 3, maxConcurrentRuns: 5 },
+  ENTERPRISE: { maxPages: 50, maxDepth: 5, maxConcurrentRuns: 15 },
+};
+
 const FREQUENCY_MIN_PLANS: Record<string, string[]> = {
   DAILY: ['FREE', 'PRO', 'AGENCY', 'ENTERPRISE'],
   HOURLY: ['PRO', 'AGENCY', 'ENTERPRISE'],
@@ -72,21 +79,34 @@ export class MonitoringService {
       throw err;
     }
 
-    // 4. Validate website belongs to organization
+    // 4. Server-Side Resource Caps (Enforce plan bounds on maxPages & maxDepth)
+    const planCap = PLAN_RESOURCE_CAPS[planCode] || PLAN_RESOURCE_CAPS['PRO']!;
+    const boundedMaxPages = Math.min(
+      Math.max(1, input.maxPages || planCap.maxPages),
+      planCap.maxPages,
+      50 // Absolute platform cap
+    );
+    const boundedMaxDepth = Math.min(
+      Math.max(0, input.maxDepth !== undefined ? input.maxDepth : planCap.maxDepth),
+      planCap.maxDepth,
+      5 // Absolute platform cap
+    );
+
+    // 5. Validate website belongs to organization
     const website = await db.website.findFirst({
       where: { id: input.websiteId, organizationId, deletedAt: null },
     });
     if (!website) throw new Error('Website not found or does not belong to organization');
 
-    // 5. Create or update monitoring config
+    // 6. Create or update monitoring config
     const monitoringConfig = await db.monitoringConfig.upsert({
       where: { websiteId: input.websiteId },
       create: {
         organizationId,
         websiteId: input.websiteId,
         frequency: reqFrequency,
-        maxPages: input.maxPages || 10,
-        maxDepth: input.maxDepth || 2,
+        maxPages: boundedMaxPages,
+        maxDepth: boundedMaxDepth,
         healthChecks: (input.healthChecks as object) || { tls: true, http: true, responseTimeThresholdMs: 3000 },
         alertPolicy: (input.alertPolicy as object) || { notifyEmail: true, minSeverity: 'HIGH' },
         enabled: true,
@@ -94,8 +114,8 @@ export class MonitoringService {
       },
       update: {
         frequency: reqFrequency,
-        maxPages: input.maxPages || undefined,
-        maxDepth: input.maxDepth || undefined,
+        maxPages: boundedMaxPages,
+        maxDepth: boundedMaxDepth,
         healthChecks: (input.healthChecks as object) || undefined,
         alertPolicy: (input.alertPolicy as object) || undefined,
         enabled: true,
@@ -104,10 +124,11 @@ export class MonitoringService {
       include: { website: true },
     });
 
-    // 6. Enqueue initial immediate monitoring execution
+    // 7. Enqueue initial immediate monitoring execution
     await monitoringQueue.add('execute-monitor', {
       monitoringConfigId: monitoringConfig.id,
       triggeredBy: 'MANUAL',
+      expectedBaselineVersion: monitoringConfig.baselineVersion,
     });
 
     return monitoringConfig;
@@ -169,6 +190,10 @@ export class MonitoringService {
     });
     if (!config) throw new Error('Monitor not found');
 
+    const { plan } = await entitlementService.getOrganizationPlan(organizationId);
+    const planCode = plan?.code || 'FREE';
+    const planCap = PLAN_RESOURCE_CAPS[planCode] || PLAN_RESOURCE_CAPS['PRO']!;
+
     // 2. If changing frequency or re-enabling, verify plan entitlement
     if (input.frequency || input.enabled === true) {
       const entitlement = await entitlementService.canUseMonitoring(organizationId);
@@ -181,8 +206,6 @@ export class MonitoringService {
       }
 
       if (input.frequency) {
-        const { plan } = await entitlementService.getOrganizationPlan(organizationId);
-        const planCode = plan?.code || 'FREE';
         const allowedPlans = FREQUENCY_MIN_PLANS[input.frequency] || ['PRO'];
         if (!allowedPlans.includes(planCode)) {
           const err = new Error(
@@ -194,13 +217,21 @@ export class MonitoringService {
       }
     }
 
+    // 3. Clamp resource limits
+    const boundedMaxPages = input.maxPages
+      ? Math.min(Math.max(1, input.maxPages), planCap.maxPages, 50)
+      : undefined;
+    const boundedMaxDepth = input.maxDepth !== undefined
+      ? Math.min(Math.max(0, input.maxDepth), planCap.maxDepth, 5)
+      : undefined;
+
     return db.monitoringConfig.update({
       where: { id: monitorId },
       data: {
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(input.frequency ? { frequency: input.frequency } : {}),
-        ...(input.maxPages ? { maxPages: input.maxPages } : {}),
-        ...(input.maxDepth ? { maxDepth: input.maxDepth } : {}),
+        ...(boundedMaxPages ? { maxPages: boundedMaxPages } : {}),
+        ...(boundedMaxDepth !== undefined ? { maxDepth: boundedMaxDepth } : {}),
         ...(input.healthChecks ? { healthChecks: input.healthChecks as object } : {}),
         ...(input.alertPolicy ? { alertPolicy: input.alertPolicy as object } : {}),
       },
@@ -296,7 +327,6 @@ export class MonitoringService {
 
   async acknowledgeAlert(organizationId: string, monitorId: string, alertId: string) {
     // Cross-monitor & cross-organization IDOR protection:
-    // Alert must belong to BOTH the specified organization AND the specified monitoringConfig!
     const alert = await db.monitoringAlert.findFirst({
       where: {
         id: alertId,
@@ -321,20 +351,65 @@ export class MonitoringService {
     });
     if (!config) throw new Error('Monitor not found');
 
-    // Concurrency limit check: If a run is currently in RUNNING state, return it instead of double triggering
+    // 1. Server-Side Rate Limiting on Manual Runs (Max 10 manual runs per 60 seconds per org)
+    const rateLimitKey = `rate:mon:manual:${organizationId}`;
+    const currentCount = await connection.incr(rateLimitKey);
+    if (currentCount === 1) {
+      await connection.expire(rateLimitKey, 60);
+    }
+    if (currentCount > 10) {
+      const err = new Error('Manual monitoring scan rate limit exceeded. Please wait a minute before triggering again.');
+      (err as unknown as { code: string }).code = 'RATE_LIMIT_EXCEEDED';
+      throw err;
+    }
+
+    // 2. Global Organization Concurrency Limit Check
+    const { plan } = await entitlementService.getOrganizationPlan(organizationId);
+    const planCode = plan?.code || 'FREE';
+    const planCap = PLAN_RESOURCE_CAPS[planCode] || PLAN_RESOURCE_CAPS['PRO']!;
+
+    const activeRunsCount = await db.monitoringRun.count({
+      where: { organizationId, status: 'RUNNING' },
+    });
+    if (activeRunsCount >= planCap.maxConcurrentRuns) {
+      return {
+        enqueued: false,
+        status: 'ORG_CONCURRENCY_LIMIT_REACHED',
+        message: `Organization active monitor limit reached (${activeRunsCount}/${planCap.maxConcurrentRuns}). Please wait for active runs to finish.`,
+      };
+    }
+
+    // 3. Per-Monitor Active Lock (Idempotency & Concurrent Click Protection)
+    const manualLockKey = `mon:lock:manual:${monitorId}`;
+    const acquired = await connection.set(manualLockKey, '1', 'EX', 30, 'NX');
+    if (!acquired) {
+      return {
+        enqueued: false,
+        status: 'MONITOR_RUN_IN_PROGRESS',
+        message: 'Scan already in progress for this monitor.',
+      };
+    }
+
+    // Check DB for any actively running job for this monitor
     const activeRun = await db.monitoringRun.findFirst({
       where: { monitoringConfigId: monitorId, status: 'RUNNING' },
     });
     if (activeRun) {
-      return { enqueued: false, runId: activeRun.id, message: 'Scan already in progress' };
+      return {
+        enqueued: false,
+        status: 'MONITOR_RUN_IN_PROGRESS',
+        runId: activeRun.id,
+        message: 'Scan already in progress for this monitor.',
+      };
     }
 
     const job = await monitoringQueue.add('execute-monitor', {
       monitoringConfigId: monitorId,
       triggeredBy: 'MANUAL',
+      expectedBaselineVersion: config.baselineVersion,
     });
 
-    return { enqueued: true, jobId: job.id };
+    return { enqueued: true, status: 'ENQUEUED', jobId: job.id };
   }
 }
 

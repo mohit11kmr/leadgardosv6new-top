@@ -1,4 +1,5 @@
 import { db } from '@leadguard/database';
+import { config as appConfig } from '@leadguard/config';
 import type { PageRecord } from '@leadguard/shared';
 import { BoundedCrawler } from '../audit/crawler.js';
 import { performHealthCheck } from './healthChecker.js';
@@ -10,6 +11,7 @@ export interface MonitoringJobData {
   monitoringConfigId: string;
   triggeredBy?: 'SCHEDULER' | 'MANUAL';
   scheduledSlot?: string;
+  expectedBaselineVersion?: number;
 }
 
 export function computeNextRun(frequency: string, baseDate = new Date()): Date {
@@ -40,11 +42,12 @@ export async function processMonitoringJob(
     include: { website: true },
   });
 
+  // 2. Archival & Enabled Guard
   if ((!config.enabled || config.archivedAt) && data.triggeredBy !== 'MANUAL') {
     return { runId: '', status: 'SKIPPED', findingCount: 0, pagesEvaluated: 0 };
   }
 
-  // 2. Check Run Idempotency (For scheduled slots)
+  // 3. Check Run Idempotency (For scheduled slots)
   if (data.scheduledSlot) {
     const existingRun = await db.monitoringRun.findUnique({
       where: {
@@ -64,7 +67,7 @@ export async function processMonitoringJob(
     }
   }
 
-  // 3. Create MonitoringRun record
+  // 4. Create MonitoringRun record
   const run = await db.monitoringRun.create({
     data: {
       monitoringConfigId: config.id,
@@ -77,16 +80,18 @@ export async function processMonitoringJob(
   });
 
   try {
-    // 4. Perform Health Check on Root URL
+    // 5. Perform Health Check on Root URL
     const health = await performHealthCheck(config.website.url, signal);
 
-    // 5. Multi-Page Crawl if Available
+    // 6. Multi-Page Crawl if Available (Configurable concurrency)
+    const crawlConcurrency = Math.min(5, Math.max(1, appConfig.MONITOR_CRAWL_CONCURRENCY || 3));
     const pages: PageRecord[] = [];
+
     if (health.isAvailable) {
       const crawler = new BoundedCrawler({
         maxPages: config.maxPages || 10,
         maxDepth: config.maxDepth || 2,
-        concurrencyLimit: 3,
+        concurrencyLimit: crawlConcurrency,
         perRequestTimeoutMs: 8000,
         globalTimeoutMs: 30000,
       });
@@ -109,7 +114,7 @@ export async function processMonitoringJob(
       });
     }
 
-    // 6. Evaluate Baseline & Regressions
+    // 7. Evaluate Baseline & Regressions
     const previousBaseline = config.baseline as unknown as BaselineSnapshot | null;
     const evaluation = await regressionEngine.evaluate(
       config.websiteId,
@@ -117,7 +122,7 @@ export async function processMonitoringJob(
       previousBaseline
     );
 
-    // 7. Track Consecutive Failure State
+    // 8. Track Consecutive Failure State
     let newConsecutiveFailures = config.consecutiveFailures;
     if (!health.isAvailable) {
       newConsecutiveFailures += 1;
@@ -125,7 +130,7 @@ export async function processMonitoringJob(
       newConsecutiveFailures = 0;
     }
 
-    // 8. Persist Findings
+    // 9. Persist Findings
     if (evaluation.regressions.length > 0) {
       await db.monitoringFinding.createMany({
         data: evaluation.regressions.map((reg) => ({
@@ -148,7 +153,7 @@ export async function processMonitoringJob(
       });
     }
 
-    // 9. Process Alerts (With consecutive failure threshold & performance threshold)
+    // 10. Process Alerts (With consecutive failure threshold & performance threshold)
     await alertEngine.processAlerts({
       organizationId: config.organizationId,
       websiteId: config.websiteId,
@@ -170,24 +175,55 @@ export async function processMonitoringJob(
     const durationMs = Date.now() - startedAt;
     const nextRunAt = computeNextRun(config.frequency);
 
-    // 10. Baseline Preservation Policy:
-    // Only overwrite baseline if current run was healthy. A transient outage must NOT erase a good baseline!
-    const baselineToPersist = health.isAvailable
-      ? (evaluation.updatedBaseline as object)
-      : (config.baseline as object) || (evaluation.updatedBaseline as object);
+    // 11. Baseline Ordering & Version Protection:
+    // Out-of-Order Execution Check: Only overwrite baseline if expected baseline version matches!
+    const expectedVersion = data.expectedBaselineVersion ?? config.baselineVersion;
+    if (health.isAvailable) {
+      // Optimistic version check
+      const updateResult = await db.monitoringConfig.updateMany({
+        where: {
+          id: config.id,
+          baselineVersion: expectedVersion,
+        },
+        data: {
+          baseline: evaluation.updatedBaseline as object,
+          baselineVersion: expectedVersion + 1,
+          consecutiveFailures: newConsecutiveFailures,
+          lastRunAt: new Date(),
+          nextRunAt,
+          lockedUntil: null,
+          lockToken: null,
+        },
+      });
 
-    await db.monitoringConfig.update({
-      where: { id: config.id },
-      data: {
-        baseline: baselineToPersist,
-        consecutiveFailures: newConsecutiveFailures,
-        lastRunAt: new Date(),
-        nextRunAt,
-        lockedUntil: null,
-      },
-    });
+      if (updateResult.count === 0) {
+        // A newer run finished ahead of this one. Do NOT overwrite the newer baseline!
+        await db.monitoringConfig.update({
+          where: { id: config.id },
+          data: {
+            consecutiveFailures: newConsecutiveFailures,
+            lastRunAt: new Date(),
+            nextRunAt,
+            lockedUntil: null,
+            lockToken: null,
+          },
+        });
+      }
+    } else {
+      // Transient failure: Preserve existing baseline, reset lock
+      await db.monitoringConfig.update({
+        where: { id: config.id },
+        data: {
+          consecutiveFailures: newConsecutiveFailures,
+          lastRunAt: new Date(),
+          nextRunAt,
+          lockedUntil: null,
+          lockToken: null,
+        },
+      });
+    }
 
-    // 11. Finalize MonitoringRun
+    // 12. Finalize MonitoringRun
     await db.monitoringRun.update({
       where: { id: run.id },
       data: {
@@ -234,6 +270,7 @@ export async function processMonitoringJob(
       data: {
         consecutiveFailures: { increment: 1 },
         lockedUntil: null,
+        lockToken: null,
       },
     });
 

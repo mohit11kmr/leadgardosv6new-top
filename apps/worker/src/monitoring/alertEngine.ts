@@ -20,6 +20,31 @@ export class AlertEngine {
     return `${configId}:${scope}:${ruleId}:${changeType}`;
   }
 
+  private async safeCreateAlert(data: {
+    organizationId: string;
+    monitoringConfigId: string;
+    monitoringRunId: string;
+    websiteId: string;
+    fingerprint: string;
+    ruleId: string;
+    severity: Severity;
+    title: string;
+    message: string;
+    status: 'OPEN';
+    lastAlertedAt: Date;
+    cooldownUntil: Date;
+  }) {
+    try {
+      return await db.monitoringAlert.create({ data });
+    } catch (err: unknown) {
+      // If concurrent worker already created the exact same alert (P2002 unique constraint), ignore safely
+      if ((err as { code?: string })?.code === 'P2002') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async processAlerts(options: {
     organizationId: string;
     websiteId: string;
@@ -77,23 +102,21 @@ export class AlertEngine {
         });
 
         if (!existingOutage) {
-          const alert = await db.monitoringAlert.create({
-            data: {
-              organizationId,
-              monitoringConfigId,
-              monitoringRunId,
-              websiteId,
-              fingerprint: outageFingerprint,
-              ruleId: 'AVAILABILITY_OUTAGE',
-              severity: 'CRITICAL',
-              title: 'Website Downtime Detected',
-              message: `Target website is unreachable (${error || 'HTTP failure'}) after ${consecutiveFailures} consecutive checks.`,
-              status: 'OPEN',
-              lastAlertedAt: now,
-              cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
-            },
+          const alert = await this.safeCreateAlert({
+            organizationId,
+            monitoringConfigId,
+            monitoringRunId,
+            websiteId,
+            fingerprint: outageFingerprint,
+            ruleId: 'AVAILABILITY_OUTAGE',
+            severity: 'CRITICAL',
+            title: 'Website Downtime Detected',
+            message: `Target website is unreachable (${error || 'HTTP failure'}) after ${consecutiveFailures} consecutive checks.`,
+            status: 'OPEN',
+            lastAlertedAt: now,
+            cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
           });
-          createdAlerts.push(alert);
+          if (alert) createdAlerts.push(alert);
         }
       }
     } else {
@@ -129,23 +152,21 @@ export class AlertEngine {
       });
 
       if (!existingTls) {
-        const alert = await db.monitoringAlert.create({
-          data: {
-            organizationId,
-            monitoringConfigId,
-            monitoringRunId,
-            websiteId,
-            fingerprint: tlsFingerprint,
-            ruleId: 'TLS_INVALID',
-            severity: 'HIGH',
-            title: 'TLS/SSL Certificate Invalid or Missing',
-            message: 'Target website does not have a valid TLS/SSL certificate.',
-            status: 'OPEN',
-            lastAlertedAt: now,
-            cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
-          },
+        const alert = await this.safeCreateAlert({
+          organizationId,
+          monitoringConfigId,
+          monitoringRunId,
+          websiteId,
+          fingerprint: tlsFingerprint,
+          ruleId: 'TLS_INVALID',
+          severity: 'HIGH',
+          title: 'TLS/SSL Certificate Invalid or Missing',
+          message: 'Target website does not have a valid TLS/SSL certificate.',
+          status: 'OPEN',
+          lastAlertedAt: now,
+          cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
         });
-        createdAlerts.push(alert);
+        if (alert) createdAlerts.push(alert);
       }
     } else if (tlsExpiresAt) {
       const daysUntilExpiry = (tlsExpiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
@@ -166,23 +187,21 @@ export class AlertEngine {
         });
 
         if (!existingExpiry) {
-          const alert = await db.monitoringAlert.create({
-            data: {
-              organizationId,
-              monitoringConfigId,
-              monitoringRunId,
-              websiteId,
-              fingerprint: nearExpiryFingerprint,
-              ruleId: 'TLS_NEAR_EXPIRY',
-              severity: 'MEDIUM',
-              title: 'TLS Certificate Expiring Soon',
-              message: `SSL/TLS certificate will expire in ${Math.round(daysUntilExpiry)} days.`,
-              status: 'OPEN',
-              lastAlertedAt: now,
-              cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
-            },
+          const alert = await this.safeCreateAlert({
+            organizationId,
+            monitoringConfigId,
+            monitoringRunId,
+            websiteId,
+            fingerprint: nearExpiryFingerprint,
+            ruleId: 'TLS_NEAR_EXPIRY',
+            severity: 'MEDIUM',
+            title: 'TLS Certificate Expiring Soon',
+            message: `SSL/TLS certificate will expire in ${Math.round(daysUntilExpiry)} days.`,
+            status: 'OPEN',
+            lastAlertedAt: now,
+            cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
           });
-          createdAlerts.push(alert);
+          if (alert) createdAlerts.push(alert);
         }
       }
     }
@@ -205,23 +224,21 @@ export class AlertEngine {
       });
 
       if (!existingPerf) {
-        const alert = await db.monitoringAlert.create({
-          data: {
-            organizationId,
-            monitoringConfigId,
-            monitoringRunId,
-            websiteId,
-            fingerprint: perfFingerprint,
-            ruleId: 'PERF_DEGRADATION',
-            severity: 'MEDIUM',
-            title: 'Performance Degradation Detected',
-            message: `Response time of ${responseTimeMs}ms exceeded threshold (${responseTimeThresholdMs}ms).`,
-            status: 'OPEN',
-            lastAlertedAt: now,
-            cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
-          },
+        const alert = await this.safeCreateAlert({
+          organizationId,
+          monitoringConfigId,
+          monitoringRunId,
+          websiteId,
+          fingerprint: perfFingerprint,
+          ruleId: 'PERF_DEGRADATION',
+          severity: 'MEDIUM',
+          title: 'Performance Degradation Detected',
+          message: `Response time of ${responseTimeMs}ms exceeded threshold (${responseTimeThresholdMs}ms).`,
+          status: 'OPEN',
+          lastAlertedAt: now,
+          cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
         });
-        createdAlerts.push(alert);
+        if (alert) createdAlerts.push(alert);
       }
     }
 
@@ -274,25 +291,23 @@ export class AlertEngine {
         });
 
         if (!existing) {
-          const alert = await db.monitoringAlert.create({
-            data: {
-              organizationId,
-              monitoringConfigId,
-              monitoringRunId,
-              websiteId,
-              fingerprint,
-              ruleId: regression.ruleId,
-              severity: regression.severity,
-              title: `Regression: ${regression.title}`,
-              message: regression.affectedUrl
-                ? `${regression.description} (Affected: ${regression.affectedUrl})`
-                : regression.description,
-              status: 'OPEN',
-              lastAlertedAt: now,
-              cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
-            },
+          const alert = await this.safeCreateAlert({
+            organizationId,
+            monitoringConfigId,
+            monitoringRunId,
+            websiteId,
+            fingerprint,
+            ruleId: regression.ruleId,
+            severity: regression.severity,
+            title: `Regression: ${regression.title}`,
+            message: regression.affectedUrl
+              ? `${regression.description} (Affected: ${regression.affectedUrl})`
+              : regression.description,
+            status: 'OPEN',
+            lastAlertedAt: now,
+            cooldownUntil: new Date(now.getTime() + cooldownDurationMs),
           });
-          createdAlerts.push(alert);
+          if (alert) createdAlerts.push(alert);
         }
       }
     }
