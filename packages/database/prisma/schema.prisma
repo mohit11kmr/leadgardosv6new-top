@@ -141,16 +141,39 @@ model Audit {
   pagesFetched Int @default(0)
   pagesScanned Int @default(0)
   findingsGenerated Int @default(0)
+  businessImpact Json?
+  executiveSummary Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
   runs AuditRun[]
+  pages AuditPage[]
   findings AuditFinding[]
   score AuditScore?
   reports Report[]
   @@index([organizationId, createdAt])
   @@unique([organizationId, idempotencyKey])
+}
+model AuditPage {
+  id String @id @default(uuid())
+  auditId String
+  url String
+  finalUrl String
+  statusCode Int?
+  title String?
+  contentType String?
+  headers Json?
+  htmlAvailable Boolean @default(false)
+  responseTimeMs Int?
+  depth Int
+  parentUrl String?
+  errorCode String?
+  redirectChain Json?
+  createdAt DateTime @default(now())
+  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  @@unique([auditId, url])
+  @@index([auditId, depth])
 }
 model AuditRun {
   id String @id @default(uuid())

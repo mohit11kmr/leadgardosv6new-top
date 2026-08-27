@@ -9,3 +9,4 @@ export const featureRegistry=featureNames.map((name,index)=>({key:`${featureIds[
 export { validateExternalUrl } from './url-security.js';
 export type ScoreBreakdown={lead:number;advertising:number;seo:number;security:number;overall:number};
 export function calculateScores(findings:Finding[]):ScoreBreakdown { const score={lead:100,advertising:100,seo:100,security:100}; for(const finding of findings){const category=finding.category.toLowerCase()==='advertising'?'advertising':finding.category.toLowerCase() as keyof typeof score;if(category in score)score[category]=Math.max(0,score[category]-Math.max(0,finding.scoreImpact));} return {...score,overall:Math.round((score.lead+score.advertising+score.seo+score.security)/4)}; }
+export * from './intelligence.js';
