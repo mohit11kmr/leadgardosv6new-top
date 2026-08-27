@@ -1,21 +1,27 @@
 import { db } from '@leadguard/database';
+import { decodeCursor, encodeCursor, buildCursorWhereClause } from '@leadguard/shared';
 import type { PublicReportDTO, PaginatedResult } from '../../dtos/public.js';
 
 export class PublicReportService {
   /**
-   * Lists immutable reports for an organization with cursor pagination
+   * Lists immutable reports for an organization with deterministic (createdAt, id) tuple cursor pagination
    */
   async listReports(
     organizationId: string,
     options: { cursor?: string; limit?: number } = {}
   ): Promise<PaginatedResult<PublicReportDTO>> {
     const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
-    const cursor = options.cursor;
+    const decodedCursor = decodeCursor(options.cursor);
+    const cursorFilter = buildCursorWhereClause(decodedCursor);
+
+    const where: any = { organizationId };
+    if (cursorFilter) {
+      where.AND = [cursorFilter];
+    }
 
     const reports = await db.report.findMany({
-      where: { organizationId },
+      where,
       take: limit + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
@@ -30,7 +36,7 @@ export class PublicReportService {
 
     const hasMore = reports.length > limit;
     const items = hasMore ? reports.slice(0, limit) : reports;
-    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+    const nextCursor = hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]!) : null;
 
     return {
       items: items.map((r) => this.formatReportDto(r)),

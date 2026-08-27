@@ -1,11 +1,17 @@
 import { db } from '@leadguard/database';
-import { validateExternalUrl, normalizeUrl } from '@leadguard/shared';
+import {
+  validateExternalUrl,
+  normalizeUrl,
+  decodeCursor,
+  encodeCursor,
+  buildCursorWhereClause,
+} from '@leadguard/shared';
 import { auditQueue } from '../../queue.js';
 import type { PublicAuditDTO, PaginatedResult } from '../../dtos/public.js';
 
 export class PublicAuditService {
   /**
-   * Triggers a new diagnostic audit with SSRF validation and database-backed idempotency
+   * Triggers a new diagnostic audit with SSRF validation, concurrency limits, and database-backed idempotency
    */
   async createAudit(
     organizationId: string,
@@ -35,10 +41,20 @@ export class PublicAuditService {
       }
     }
 
+    // 2. Concurrency limit protection: Prevent unlimited parallel audits per organization
+    const activeAudits = await db.audit.count({
+      where: { organizationId, status: { in: ['QUEUED', 'RUNNING'] } },
+    });
+    if (activeAudits >= 10) {
+      const err = new Error('Organization concurrent audit limit reached. Please wait for current audits to complete.');
+      (err as any).code = 'CONCURRENT_AUDIT_LIMIT_EXCEEDED';
+      throw err;
+    }
+
     let targetWebsiteId = websiteId;
 
     if (!targetWebsiteId && url) {
-      // 2. Validate URL against SSRF (private IPs, loopback, metadata, credentials)
+      // 3. Validate URL against SSRF (private IPs, loopback, metadata, credentials)
       try {
         await validateExternalUrl(url);
       } catch (err: any) {
@@ -55,16 +71,35 @@ export class PublicAuditService {
 
       if (!website) {
         const domain = new URL(normalized).hostname;
-        website = await db.website.create({
-          data: {
-            organizationId,
-            url,
-            domain,
-            normalizedUrl: normalized,
-            name: domain,
-          },
-        });
+        try {
+          website = await db.website.create({
+            data: {
+              organizationId,
+              url,
+              domain,
+              normalizedUrl: normalized,
+              name: domain,
+            },
+          });
+        } catch {
+          // Race-condition fallback: lookup if created concurrently
+          website = await db.website.findFirst({
+            where: { organizationId, normalizedUrl: normalized },
+          });
+          if (!website) {
+            website = await db.website.findFirst({
+              where: { organizationId, url },
+            });
+          }
+        }
       }
+
+      if (!website) {
+        const err = new Error('Failed to resolve or register target website');
+        (err as any).code = 'WEBSITE_RESOLUTION_FAILED';
+        throw err;
+      }
+
       targetWebsiteId = website.id;
     }
 
@@ -98,19 +133,24 @@ export class PublicAuditService {
   }
 
   /**
-   * Lists audits for an organization with deterministic cursor pagination
+   * Lists audits for an organization with deterministic (createdAt, id) tuple cursor pagination
    */
   async listAudits(
     organizationId: string,
     options: { cursor?: string; limit?: number } = {}
   ): Promise<PaginatedResult<PublicAuditDTO>> {
     const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
-    const cursor = options.cursor;
+    const decodedCursor = decodeCursor(options.cursor);
+    const cursorFilter = buildCursorWhereClause(decodedCursor);
+
+    const where: any = { organizationId };
+    if (cursorFilter) {
+      where.AND = [cursorFilter];
+    }
 
     const audits = await db.audit.findMany({
-      where: { organizationId },
+      where,
       take: limit + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: {
         website: { select: { id: true, url: true, name: true, domain: true } },
@@ -120,7 +160,7 @@ export class PublicAuditService {
 
     const hasMore = audits.length > limit;
     const items = hasMore ? audits.slice(0, limit) : audits;
-    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+    const nextCursor = hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]!) : null;
 
     return {
       items: items.map((a) => this.formatAuditDto(a)),

@@ -8,3 +8,4 @@ export * from './url-security.js';
 export * from './scanners/index.js';
 export * from './intelligence/index.js';
 export * from './claim-validator.js';
+export * from './pagination.js';

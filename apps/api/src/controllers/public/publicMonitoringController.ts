@@ -67,6 +67,12 @@ publicMonitoringRouter.post('/:id/run', apiKeyService.requireScope('MONITORING_R
       },
     });
   } catch (error: any) {
+    if (error.code === 'MONITOR_RUN_IN_PROGRESS') {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'MONITOR_RUN_IN_PROGRESS', message: error.message },
+      });
+    }
     if (error.code === 'NOT_FOUND') {
       return res.status(404).json({
         success: false,

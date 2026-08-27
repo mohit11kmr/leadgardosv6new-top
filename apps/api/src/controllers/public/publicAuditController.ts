@@ -21,7 +21,12 @@ publicAuditRouter.post('/', apiKeyService.requireScope('AUDIT_RUN', 'AUDIT_RUN')
       },
     });
   } catch (error: any) {
-    if (error.code === 'INVALID_REQUEST' || error.code === 'SSRF_BLOCKED') {
+    if (
+      error.code === 'INVALID_REQUEST' ||
+      error.code === 'SSRF_BLOCKED' ||
+      error.code === 'CONCURRENT_AUDIT_LIMIT_EXCEEDED' ||
+      error.code === 'WEBSITE_RESOLUTION_FAILED'
+    ) {
       return res.status(400).json({
         success: false,
         error: { code: error.code, message: error.message },

@@ -1,27 +1,32 @@
 import { db } from '@leadguard/database';
+import { decodeCursor, encodeCursor, buildCursorWhereClause } from '@leadguard/shared';
 import { monitoringQueue } from '../../queue.js';
 import type {
   PublicMonitorDTO,
   PublicMonitorStatusDTO,
-  PublicMonitorRunDTO,
   PaginatedResult,
 } from '../../dtos/public.js';
 
 export class PublicMonitoringService {
   /**
-   * Lists monitors for an organization with cursor pagination
+   * Lists monitors for an organization with deterministic (createdAt, id) tuple cursor pagination
    */
   async listMonitors(
     organizationId: string,
     options: { cursor?: string; limit?: number } = {}
   ): Promise<PaginatedResult<PublicMonitorDTO>> {
     const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
-    const cursor = options.cursor;
+    const decodedCursor = decodeCursor(options.cursor);
+    const cursorFilter = buildCursorWhereClause(decodedCursor);
+
+    const where: any = { organizationId, archivedAt: null };
+    if (cursorFilter) {
+      where.AND = [cursorFilter];
+    }
 
     const monitors = await db.monitoringConfig.findMany({
-      where: { organizationId, archivedAt: null },
+      where,
       take: limit + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: {
         website: { select: { id: true, url: true, name: true, domain: true } },
@@ -30,7 +35,7 @@ export class PublicMonitoringService {
 
     const hasMore = monitors.length > limit;
     const items = hasMore ? monitors.slice(0, limit) : monitors;
-    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+    const nextCursor = hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]!) : null;
 
     return {
       items: items.map((m) => this.formatMonitorDto(m)),
@@ -94,13 +99,13 @@ export class PublicMonitoringService {
   }
 
   /**
-   * Executes a monitor health check on demand with idempotency & concurrency protection
+   * Executes a monitor health check on demand with database-backed idempotency & active run conflict protection
    */
   async runMonitor(
     organizationId: string,
     monitorId: string,
     idempotencyKey?: string
-  ): Promise<{ jobId: string; status: string; websiteUrl: string }> {
+  ): Promise<{ jobId: string; status: string; websiteUrl: string; reused?: boolean }> {
     const monitor = await db.monitoringConfig.findFirst({
       where: { id: monitorId, organizationId, archivedAt: null },
       include: { website: true },
@@ -112,9 +117,54 @@ export class PublicMonitoringService {
       throw err;
     }
 
+    // 1. Idempotency Check: When key is supplied, return existing run if already initiated
+    if (idempotencyKey) {
+      const existingRun = await db.monitoringRun.findFirst({
+        where: {
+          monitoringConfigId: monitor.id,
+          idempotencyKey,
+        },
+      });
+
+      if (existingRun) {
+        return {
+          jobId: existingRun.id,
+          status: existingRun.status,
+          websiteUrl: monitor.website.url,
+          reused: true,
+        };
+      }
+    } else {
+      // 2. Without Idempotency-Key: Prevent overlapping runs if check is already active (QUEUED or RUNNING)
+      const activeRun = await db.monitoringRun.findFirst({
+        where: {
+          monitoringConfigId: monitor.id,
+          status: { in: ['QUEUED', 'RUNNING'] },
+        },
+      });
+
+      if (activeRun) {
+        const err = new Error('A health check run is already in progress for this monitor.');
+        (err as any).code = 'MONITOR_RUN_IN_PROGRESS';
+        throw err;
+      }
+    }
+
+    // Create database monitoring run record
+    const run = await db.monitoringRun.create({
+      data: {
+        monitoringConfigId: monitor.id,
+        websiteId: monitor.websiteId,
+        organizationId,
+        idempotencyKey: idempotencyKey || null,
+        status: 'QUEUED',
+      },
+    });
+
     const job = await monitoringQueue.add(
       'execute-monitor',
       {
+        runId: run.id,
         configId: monitor.id,
         websiteId: monitor.websiteId,
         url: monitor.website.url,
@@ -125,7 +175,7 @@ export class PublicMonitoringService {
     );
 
     return {
-      jobId: job.id || `job-${Date.now()}`,
+      jobId: run.id,
       status: 'QUEUED',
       websiteUrl: monitor.website.url,
     };

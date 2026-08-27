@@ -89,6 +89,42 @@ function sanitizeCssColor(color: string, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Validates remote logo URL with SSRF protection, size capping (1MB), and content-type checking
+ */
+export async function validateAndCheckSafeLogo(logoUrl: string): Promise<string | null> {
+  try {
+    const parsed = await validateExternalUrl(logoUrl);
+
+    // If local test fixtures enabled, return parsed URL directly
+    if (process.env.ALLOW_LOCAL_FIXTURES === 'true') {
+      return parsed.toString();
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+
+    const res = await fetch(parsed.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'LeadGuard-PDF/6.0' },
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) return null;
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) return null;
+
+    const contentLength = Number(res.headers.get('content-length') || 0);
+    if (contentLength > 1_048_576) return null; // 1 MB limit
+
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function generateReportHtml(options: {
   title: string;
   auditDate: string;
@@ -192,15 +228,10 @@ export async function processPdfJob(job: Job<PdfJobData>) {
       secondaryColor: '#1e293b',
     };
 
-    // SSRF Check on custom logo URL if present
+    // SSRF Check & Content Validation on custom logo URL if present
     let safeLogoUrl: string | null = null;
     if (branding.logoUrl) {
-      try {
-        const parsed = await validateExternalUrl(branding.logoUrl);
-        safeLogoUrl = parsed.toString();
-      } catch {
-        safeLogoUrl = null;
-      }
+      safeLogoUrl = await validateAndCheckSafeLogo(branding.logoUrl);
     }
 
     const renderedHtml = generateReportHtml({
@@ -215,6 +246,11 @@ export async function processPdfJob(job: Job<PdfJobData>) {
         logoUrl: safeLogoUrl,
       },
     });
+
+    // Enforce max HTML template size (500 KB limit)
+    if (renderedHtml.length > 512_000) {
+      throw new Error('Rendered HTML exceeds maximum allowed report template size (500KB)');
+    }
 
     // Generate formatted standalone PDF/HTML export artifact
     const storage = getStorageProvider();
