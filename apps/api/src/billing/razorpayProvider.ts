@@ -19,9 +19,9 @@ export class RazorpayProvider implements PaymentProvider {
   private readonly webhookSecret?: string;
 
   constructor() {
-    this.mode = (process.env.PAYMENT_PROVIDER_MODE as PaymentProviderMode) || config.PAYMENT_PROVIDER_MODE || 'MOCK';
-    this.keyId = process.env.RAZORPAY_KEY_ID || config.RAZORPAY_KEY_ID;
-    this.keySecret = process.env.RAZORPAY_KEY_SECRET || config.RAZORPAY_KEY_SECRET;
+    this.mode = (process.env.PAYMENT_PROVIDER_MODE as PaymentProviderMode) || 'MOCK';
+    this.keyId = process.env.RAZORPAY_KEY_ID || (this.mode === 'MOCK' ? undefined : config.RAZORPAY_KEY_ID);
+    this.keySecret = process.env.RAZORPAY_KEY_SECRET || (this.mode === 'MOCK' ? undefined : config.RAZORPAY_KEY_SECRET);
     this.webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || config.RAZORPAY_WEBHOOK_SECRET;
 
     // Fail immediately if configured for real integration (TEST or LIVE) without credentials

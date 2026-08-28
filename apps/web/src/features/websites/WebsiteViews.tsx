@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWebsites, useWebsite } from '../../hooks/useWebsites.js';
 import { useAudit } from '../../hooks/useAudit.js';
 import { Button } from '../../components/ui/Button.js';
@@ -8,8 +8,10 @@ import { Input } from '../../components/ui/Input.js';
 import { Badge } from '../../components/ui/Badge.js';
 import { Card } from '../../components/ui/Card.js';
 import { EmptyState, Skeleton } from '../../components/ui/States.js';
+import { IconWebsites, IconAudits, IconExternalLink, IconPlus, IconArrowRight } from '../../components/ui/Icons.js';
 
 export function WebsiteListView() {
+  const navigate = useNavigate();
   const { websites, isLoading, createWebsite, isCreating } = useWebsites();
   const { startAudit, isStarting } = useAudit(undefined);
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -35,7 +37,7 @@ export function WebsiteListView() {
     setStartingWebsiteId(websiteId);
     try {
       const newAudit = await startAudit({ websiteId });
-      window.location.href = `/audits/${newAudit.id}`;
+      navigate(`/audits/${newAudit.id}`);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to trigger audit');
     } finally {
@@ -60,7 +62,7 @@ export function WebsiteListView() {
           <p>Monitor conversion integrity and run deep diagnostics across registered domains.</p>
         </div>
         <Button variant="primary" onClick={() => setIsAddOpen(true)}>
-          + Add Website
+          <IconPlus size={16} /> Add Website
         </Button>
       </div>
 
@@ -70,7 +72,7 @@ export function WebsiteListView() {
           description="Register your first website to start running diagnostic scans."
           actionText="Add Website"
           onAction={() => setIsAddOpen(true)}
-          icon="🌐"
+          icon={<IconWebsites size={40} color="#38bdf8" />}
         />
       ) : (
         <Card className="tableCard">
@@ -100,8 +102,9 @@ export function WebsiteListView() {
                         target="_blank"
                         rel="noreferrer"
                         className="tableExternalUrl"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                       >
-                        {site.url} ↗
+                        {site.url} <IconExternalLink size={12} />
                       </a>
                     </td>
                     <td>
@@ -134,16 +137,11 @@ export function WebsiteListView() {
                           isLoading={isStarting && startingWebsiteId === site.id}
                           onClick={() => handleTriggerAudit(site.id)}
                         >
-                          Start Audit
+                          <IconAudits size={14} /> Run Audit
                         </Button>
-                        {latestAudit && (
-                          <Link
-                            to={`/audits/${latestAudit.id}`}
-                            className="btn btn-outline btn-sm"
-                          >
-                            View Audit
-                          </Link>
-                        )}
+                        <Link to={`/websites/${site.id}`} className="btn btn-outline btn-sm">
+                          History
+                        </Link>
                       </div>
                     </td>
                   </tr>
@@ -154,27 +152,33 @@ export function WebsiteListView() {
         </Card>
       )}
 
-      {/* Add Website Modal */}
       <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Register New Website">
-        {error && <div className="authError mb3">{error}</div>}
-        <form onSubmit={handleAddWebsite} className="formLayout">
-          <Input
-            label="Website Name"
-            placeholder="e.g. LeadGuard Main Site"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <Input
-            label="Target URL"
-            type="url"
-            placeholder="https://example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            required
-          />
-          <div className="modalFooter">
-            <Button variant="ghost" onClick={() => setIsAddOpen(false)} type="button">
+        <form onSubmit={handleAddWebsite}>
+          {error && <div className="formError mb4">{error}</div>}
+          <div className="formGroup mb4">
+            <label className="formLabel">Website Name</label>
+            <Input
+              placeholder="e.g. Acme Production Portal"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+          <div className="formGroup mb4">
+            <label className="formLabel">Full Website URL</label>
+            <Input
+              type="url"
+              placeholder="https://example.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+            <small className="formHint">
+              Must include valid scheme (https://). Outbound SSRF gates block private IP ranges.
+            </small>
+          </div>
+          <div className="modalActions">
+            <Button variant="outline" type="button" onClick={() => setIsAddOpen(false)}>
               Cancel
             </Button>
             <Button variant="primary" type="submit" isLoading={isCreating}>
@@ -188,6 +192,7 @@ export function WebsiteListView() {
 }
 
 export function WebsiteDetailView() {
+  const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { website, isLoading } = useWebsite(id);
   const { startAudit, isStarting } = useAudit(undefined);
@@ -208,9 +213,8 @@ export function WebsiteDetailView() {
           title="Website Not Found"
           description="The requested website does not exist or you do not have permission to view it."
           actionText="Back to Websites"
-          onAction={() => {
-            window.location.href = '/websites';
-          }}
+          onAction={() => navigate('/websites')}
+          icon={<IconWebsites size={40} color="#64748b" />}
         />
       </div>
     );
@@ -219,7 +223,7 @@ export function WebsiteDetailView() {
   const handleStartAudit = async () => {
     try {
       const newAudit = await startAudit({ websiteId: website.id });
-      window.location.href = `/audits/${newAudit.id}`;
+      navigate(`/audits/${newAudit.id}`);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to start audit');
     }
@@ -238,13 +242,13 @@ export function WebsiteDetailView() {
           </p>
         </div>
         <Button variant="primary" onClick={handleStartAudit} isLoading={isStarting}>
-          ⚡ Run Diagnostic Audit
+          <IconAudits size={16} /> Run Diagnostic Audit
         </Button>
       </div>
 
       <Card className="tableCard">
-        <div className="cardHeaderFlex">
-          <h3>Audit History</h3>
+        <div className="cardHeaderFlex" style={{ padding: '20px' }}>
+          <h3 style={{ margin: 0 }}>Audit History</h3>
           <Badge variant="neutral">{(website.audits ?? []).length} Audit Run(s)</Badge>
         </div>
         <table className="dataTable">
@@ -258,27 +262,36 @@ export function WebsiteDetailView() {
               <th>SEO</th>
               <th>Security</th>
               <th>Created At</th>
-              <th>Dossier</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {(website.audits ?? []).map((audit) => (
               <tr key={audit.id}>
                 <td>
-                  <Link to={`/audits/${audit.id}`} className="tableNameLink">
-                    {audit.id.slice(0, 8)}...
-                  </Link>
+                  <span className="monoText">{audit.id.slice(0, 8)}...</span>
                 </td>
                 <td>
-                  <Badge
-                    variant={audit.status === 'COMPLETED' ? 'success' : 'high'}
-                    size="sm"
-                  >
+                  <Badge variant={audit.status === 'COMPLETED' ? 'success' : 'high'} size="sm">
                     {audit.status}
                   </Badge>
                 </td>
                 <td>
-                  <strong>{audit.score?.overall ?? '-'} / 100</strong>
+                  {audit.score ? (
+                    <span
+                      className={`scoreBadge ${
+                        audit.score.overall >= 80
+                          ? 'score-green'
+                          : audit.score.overall >= 60
+                          ? 'score-yellow'
+                          : 'score-red'
+                      }`}
+                    >
+                      {audit.score.overall}/100
+                    </span>
+                  ) : (
+                    '-'
+                  )}
                 </td>
                 <td>{audit.score?.lead ?? '-'}</td>
                 <td>{audit.score?.advertising ?? '-'}</td>
@@ -287,15 +300,15 @@ export function WebsiteDetailView() {
                 <td>{new Date(audit.createdAt).toLocaleString()}</td>
                 <td>
                   <Link to={`/audits/${audit.id}`} className="btn btn-outline btn-sm">
-                    Open Dossier →
+                    View Report <IconArrowRight size={12} />
                   </Link>
                 </td>
               </tr>
             ))}
             {(website.audits ?? []).length === 0 && (
               <tr>
-                <td colSpan={9} className="textCenter py4">
-                  No audits run for this website yet. Click &quot;Run Diagnostic Audit&quot; above to begin.
+                <td colSpan={9} style={{ textAlign: 'center', padding: '32px', color: '#94a3b8' }}>
+                  No audits generated yet for this website. Click "Run Diagnostic Audit" above.
                 </td>
               </tr>
             )}

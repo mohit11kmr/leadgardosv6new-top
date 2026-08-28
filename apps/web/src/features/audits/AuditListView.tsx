@@ -1,11 +1,13 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAudits } from '../../hooks/useAudit.js';
 import { Card } from '../../components/ui/Card.js';
 import { Badge } from '../../components/ui/Badge.js';
 import { Skeleton, EmptyState } from '../../components/ui/States.js';
+import { IconAudits, IconArrowRight, IconPlus } from '../../components/ui/Icons.js';
 
 export function AuditListView() {
+  const navigate = useNavigate();
   const { audits, isLoading } = useAudits(50);
 
   if (isLoading) {
@@ -22,10 +24,10 @@ export function AuditListView() {
       <div className="pageHeader">
         <div>
           <h1>Diagnostic Audits</h1>
-          <p>Historical audit runs across all registered web properties.</p>
+          <p>Historical audit runs and conversion vulnerability assessments across all registered web properties.</p>
         </div>
         <Link to="/websites" className="btn btn-primary">
-          + New Audit
+          <IconPlus size={16} /> New Diagnostic Scan
         </Link>
       </div>
 
@@ -34,10 +36,8 @@ export function AuditListView() {
           title="No Audits Executed"
           description="Go to Websites and launch an audit to see historical diagnostic runs."
           actionText="Go to Websites"
-          onAction={() => {
-            window.location.href = '/websites';
-          }}
-          icon="🔍"
+          onAction={() => navigate('/websites')}
+          icon={<IconAudits size={40} color="#38bdf8" />}
         />
       ) : (
         <Card className="tableCard">
@@ -47,8 +47,8 @@ export function AuditListView() {
                 <th>Website</th>
                 <th>Status</th>
                 <th>Lead Health</th>
-                <th>Lead</th>
-                <th>Ads</th>
+                <th>Lead Capture</th>
+                <th>Advertising</th>
                 <th>SEO</th>
                 <th>Security</th>
                 <th>Execution Date</th>
@@ -102,7 +102,7 @@ export function AuditListView() {
                   <td>{new Date(audit.createdAt).toLocaleDateString()}</td>
                   <td>
                     <Link to={`/audits/${audit.id}`} className="btn btn-outline btn-sm">
-                      View Dossier →
+                      View Dossier <IconArrowRight size={12} />
                     </Link>
                   </td>
                 </tr>

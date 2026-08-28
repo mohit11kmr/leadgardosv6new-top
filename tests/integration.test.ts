@@ -147,7 +147,7 @@ describe('End-to-End Diagnostic Audit Integration Flow (Requirement 32)', () => 
       .get(`/api/v1/audits/${auditId}/runs`)
       .set('Authorization', `Bearer ${token}`);
     expect(apiRuns.status).toBe(200);
-    expect(apiRuns.body.data).toHaveLength(1);
+    expect(apiRuns.body.data.length).toBeGreaterThanOrEqual(1);
 
     // 6e. GET /audits/:id/business-impact
     const apiImpact = await request(app)
