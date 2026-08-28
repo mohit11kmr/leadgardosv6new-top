@@ -1,0 +1,18 @@
+# LeadGuard OS robots.txt
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+Allow: /cookies
+Allow: /refund
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /audits/
+Disallow: /monitoring/
+Disallow: /agency/
+Disallow: /developer/
+Disallow: /billing
+Disallow: /admin/
+Disallow: /settings/
+
+Sitemap: https://leadguard.io/sitemap.xml
