@@ -149,3 +149,29 @@ billingWebhookWorker.on('failed', (job, error) =>
 );
 
 console.log('LeadGuard worker listening');
+
+const handleWorkerShutdown = async (signal: string) => {
+  console.log(`Received ${signal}. Shutting down BullMQ workers gracefully...`);
+  try {
+    await Promise.allSettled([
+      auditWorker.close(),
+      monitoringWorker.close(),
+      billingWebhookWorker.close(),
+      prospectWorker.close(),
+      competitorWorker.close(),
+      pitchWorker.close(),
+      pdfWorker.close(),
+      webhookWorker.close(),
+    ]);
+    console.log('All BullMQ workers stopped accepting jobs and finished active work.');
+    await connection.quit();
+    console.log('Redis connection closed. Worker process exiting.');
+    process.exit(0);
+  } catch (err: any) {
+    console.error('Error during graceful worker shutdown:', err.message);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => handleWorkerShutdown('SIGTERM'));
+process.on('SIGINT', () => handleWorkerShutdown('SIGINT'));

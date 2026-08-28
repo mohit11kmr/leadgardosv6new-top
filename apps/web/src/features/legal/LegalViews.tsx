@@ -18,10 +18,14 @@ function LegalLayout({ title, subtitle, lastUpdated, children }: { title: string
       </header>
 
       <main style={{ maxWidth: '840px', margin: '0 auto', padding: '60px 24px 100px' }}>
-        <div style={{ marginBottom: '40px' }}>
+        <div style={{ marginBottom: '32px' }}>
           <h1 style={{ fontSize: '32px', fontWeight: '800', color: '#fff', marginBottom: '8px', letterSpacing: '-0.02em' }}>{title}</h1>
           <p style={{ fontSize: '16px', color: '#94a3b8', margin: 0 }}>{subtitle}</p>
           <p style={{ fontSize: '13px', color: '#64748b', marginTop: '12px' }}>Last Updated: {lastUpdated}</p>
+        </div>
+
+        <div style={{ background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: '8px', padding: '14px 18px', marginBottom: '24px', fontSize: '13px', color: '#94a3b8' }}>
+          <strong style={{ color: '#38bdf8' }}>Operational Notice:</strong> This document represents the operational data handling and security baseline of LeadGuard OS V6 and is provided for customer transparency pending final jurisdiction-specific legal counsel review.
         </div>
 
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '40px', lineHeight: '1.7', fontSize: '15px', color: '#cbd5e1' }}>
@@ -44,11 +48,11 @@ function LegalLayout({ title, subtitle, lastUpdated, children }: { title: string
 
 export function PrivacyPolicyView() {
   return (
-    <LegalLayout title="Privacy Policy" subtitle="How LeadGuard OS collects, protects, and handles your diagnostic data." lastUpdated="August 28, 2026">
+    <LegalLayout title="Privacy Policy" subtitle="How LeadGuard OS collects, protects, and handles diagnostic and telemetry data." lastUpdated="August 28, 2026">
       <h3 style={{ color: '#fff', marginTop: 0 }}>1. Information We Collect</h3>
       <p>LeadGuard OS collects diagnostic information required to inspect websites, identify lead leakage, and verify marketing tracking tags. This includes:</p>
       <ul>
-        <li>Account Information: Name, work email address, and authentication credentials.</li>
+        <li>Account Information: Name, work email address, and authentication credentials (hashed using scrypt/argon2).</li>
         <li>Website Diagnostics: URLs submitted for audit, public HTML metadata, response headers, and performance telemetry.</li>
         <li>Billing Details: Payment transaction IDs and subscription statuses processed securely via authorized payment gateways (e.g. Razorpay). We do not store raw card numbers.</li>
       </ul>
@@ -60,7 +64,7 @@ export function PrivacyPolicyView() {
       <p>Every organization operates within an isolated tenant boundary. Diagnostic findings, report snapshots, and webhook endpoints are protected by server-side authorization gates.</p>
 
       <h3 style={{ color: '#fff', marginTop: '32px' }}>4. Security & Retention</h3>
-      <p>We enforce TLS encryption in transit and AES-256 / scrypt security at rest. Raw API telemetry is retained for 90 days before automated lifecycle purging.</p>
+      <p>We enforce TLS encryption in transit and secure database storage with strict tenant boundaries. Raw API telemetry is retained for 90 days before automated lifecycle purging.</p>
     </LegalLayout>
   );
 }

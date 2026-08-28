@@ -154,5 +154,30 @@ app.use(
 );
 
 if (config.NODE_ENV !== 'test') {
-  app.listen(config.PORT, () => console.log(`LeadGuard API listening on ${config.PORT}`));
+  const server = app.listen(config.PORT, () => console.log(`LeadGuard API listening on ${config.PORT}`));
+
+  const handleShutdown = async (signal: string) => {
+    console.log(`Received ${signal}. Starting graceful shutdown...`);
+    server.close(async () => {
+      console.log('HTTP server closed.');
+      try {
+        await redis.quit();
+        await db.$disconnect();
+        console.log('Database and Redis connections closed. Exiting process.');
+        process.exit(0);
+      } catch (err: any) {
+        console.error('Error during dependency disconnect:', err.message);
+        process.exit(1);
+      }
+    });
+
+    // Force exit after 10 seconds if hanging
+    setTimeout(() => {
+      console.error('Graceful shutdown timed out. Forcing process exit.');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 }

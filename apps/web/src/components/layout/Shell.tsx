@@ -2,6 +2,20 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import { OrganizationSwitcher } from './OrganizationSwitcher.js';
+import {
+  IconDashboard,
+  IconWebsites,
+  IconAudits,
+  IconReports,
+  IconMonitoring,
+  IconAgency,
+  IconDeveloper,
+  IconTestimonials,
+  IconBilling,
+  IconSettings,
+  IconAdmin,
+  IconShield,
+} from '../ui/Icons.js';
 
 export interface ShellProps {
   children: React.ReactNode;
@@ -12,17 +26,17 @@ export function Shell({ children }: ShellProps) {
   const location = useLocation();
 
   const navLinks = [
-    { label: 'Dashboard', path: '/dashboard', icon: '📊' },
-    { label: 'Websites', path: '/websites', icon: '🌐' },
-    { label: 'Audits', path: '/audits', icon: '🔍' },
-    { label: 'Reports', path: '/reports', icon: '📑' },
-    { label: 'Watchdog 24/7', path: '/monitoring', icon: '⚡' },
-    { label: 'Agency Portal', path: '/agency', icon: '🏢' },
-    { label: 'Developer API', path: '/developer', icon: '🔑' },
-    { label: 'Testimonials', path: '/testimonials', icon: '💬' },
-    { label: 'Billing & Plans', path: '/billing', icon: '💳' },
-    { label: 'Settings', path: '/settings', icon: '⚙️' },
-    { label: 'Admin Platform', path: '/admin', icon: '🛡️' },
+    { label: 'Dashboard', path: '/dashboard', icon: <IconDashboard size={18} /> },
+    { label: 'Websites', path: '/websites', icon: <IconWebsites size={18} /> },
+    { label: 'Audits', path: '/audits', icon: <IconAudits size={18} /> },
+    { label: 'Reports', path: '/reports', icon: <IconReports size={18} /> },
+    { label: 'Watchdog 24/7', path: '/monitoring', icon: <IconMonitoring size={18} /> },
+    { label: 'Agency Portal', path: '/agency', icon: <IconAgency size={18} /> },
+    { label: 'Developer API', path: '/developer', icon: <IconDeveloper size={18} /> },
+    { label: 'Testimonials', path: '/testimonials', icon: <IconTestimonials size={18} /> },
+    { label: 'Billing & Plans', path: '/billing', icon: <IconBilling size={18} /> },
+    { label: 'Settings', path: '/settings', icon: <IconSettings size={18} /> },
+    { label: 'Admin Platform', path: '/admin', icon: <IconAdmin size={18} /> },
   ];
 
   return (
@@ -30,7 +44,9 @@ export function Shell({ children }: ShellProps) {
       <header className="appTopbar">
         <div className="topbarLeft">
           <Link to="/dashboard" className="brandLogo">
-            <span className="brandShield">🛡️</span>
+            <span className="brandShield" style={{ display: 'inline-flex', alignItems: 'center', color: '#38bdf8' }}>
+              <IconShield size={20} />
+            </span>
             <span className="brandTitle">LeadGuard <small>OS V6</small></span>
           </Link>
           {authenticated && <OrganizationSwitcher />}
@@ -69,7 +85,9 @@ export function Shell({ children }: ShellProps) {
                     to={link.path}
                     className={`sidebarLink ${isActive ? 'active' : ''}`}
                   >
-                    <span className="navIcon">{link.icon}</span>
+                    <span className="navIcon" style={{ display: 'inline-flex', alignItems: 'center', marginRight: '8px' }}>
+                      {link.icon}
+                    </span>
                     <span className="navLabel">{link.label}</span>
                   </Link>
                 );

@@ -1,36 +1,36 @@
 # LeadGuard OS V6 — Production Readiness Report
-**Final Quality, Reliability & Launch Gate**
+**Final Release Candidate Audit & Operational Truth Matrix**
 
 Date: August 28, 2026  
-Status: **GREEN / PRODUCTION READY**  
+Status: **RELEASE CANDIDATE READY (GREEN / YELLOW INFRASTRUCTURE GATED)**
 Platform: LeadGuard OS V6  
 Architecture: Decoupled Monorepo (Node.js/TypeScript, React 19 + Vite, Express, PostgreSQL + Prisma, Redis + BullMQ)
 
 ---
 
-## 1. System Reliability & Domain Scorecard
+## 1. Subsystem Implementation & Verification Status
 
-| Area | Status | Evidence & Enforcement |
+| Subsystem / Domain | Readiness State | Repository Verification vs Required Cloud Infrastructure |
 |---|:---:|---|
-| **1. Architecture** | `GREEN` | Strict monorepo modularity (`apps/api`, `apps/web`, `apps/worker`, `packages/database`, `packages/shared`, `packages/config`). No monolithic bundling; services communicate via Redis queues and Postgres DB. Zero direct DB calls from frontend. |
-| **2. Database & Schema** | `GREEN` | PostgreSQL with Prisma ORM. Indexes on all primary query paths `(organizationId, createdAt, id)`, composite unique constraints on `(organizationId, url)` preventing race conditions, and transactional DDL migrations. |
-| **3. Redis Infrastructure** | `GREEN` | Dedicated Redis instance for 14 BullMQ queues, multi-tier sliding-window rate limiters, session tracking, and distributed locking. Redis is treated as coordination state, not permanent business truth. |
-| **4. Background Queues** | `GREEN` | BullMQ workers (`audit`, `monitoring`, `report`, `webhook`, `agency-pitch`, `agency-prospect`, `agency-competitor`) with isolated concurrency, exponential backoff retries, stalled-job recovery, and dead-letter failure logging. |
-| **5. Authentication & Sessions** | `GREEN` | HttpOnly, SameSite=Strict refresh cookies with token rotation & reuse detection, short-lived JWT access tokens, argon2/scrypt password hashing, session revocation, and zero third-party auth lock-in (Zero Firebase). |
-| **6. Authorization (RBAC)** | `GREEN` | 6-tier role model (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`, `AGENCY_ADMIN`, `AGENCY_MEMBER`) verified server-side on all endpoints. Client-side button hiding is not treated as security. |
-| **7. Audit Engine** | `GREEN` | Core multi-category diagnostic scanner with URL normalization, SSRF outbound protection, score weighting (0–100), quantified business impact, and partial scan resilience. |
-| **8. Watchdog Monitoring** | `GREEN` | Automated multi-page health check scheduler with distributed locking, response time tracking, TLS expiry calculation, baseline snapshots, regression detection, and canonical `AlertStatus` lifecycle. |
-| **9. Commercial Billing** | `GREEN` | Tiered plans (Free, Pro, Agency, Enterprise) and one-time credits with Razorpay integer paise accuracy, webhook signature validation, replay protection, and transactional quota enforcement. |
-| **10. Diagnostic Reports** | `GREEN` | Immutable JSON snapshots (`Report.snapshotData`) with explicit versioning (`reportVersion`, `templateVersion`, `brandingVersion`), cryptographic SHA-256 share tokens (`lg_share_...`), scrypt password protection, rate-limited access, and sanitized HTML/PDF generation. |
-| **11. Public Developer API** | `GREEN` | Dedicated service and DTO layer, least-privilege scoped API keys (`lg_live_...`), category-based Redis rate limits (`AUDIT_RUN`, `MONITORING_RUN`, `READ`), deterministic `(createdAt, id)` tuple cursor pagination, and database-backed idempotency. |
-| **12. Webhooks & Outbox** | `GREEN` | Transactional Outbox pattern (`OutboxEvent`), HMAC-SHA256 signatures (`t=<ts>,v1=<sig>`) with constant-time verification, 300s replay window, destination SSRF validation, and manual redirect hop verification. |
-| **13. Agency Platform** | `GREEN` | Multi-client workspace delegation, prospect discovery via CSV ingestion, competitor radar benchmarking, embeddable lead capture widget with origin security, and AI-grounded pitch generator. |
-| **14. Admin Portal** | `GREEN` | Centralized administrative management for user moderation, organization suspension, security event inspection, and tamper-evident audit logging in `AdminAuditLog`. |
-| **15. Frontend UI/UX** | `GREEN` | Professional slate/dark theme with `Inter` typography, semantic color tokens, loading skeletons, responsive tables, empty states, error retry boundaries, and public legal pages (`/privacy`, `/terms`, `/cookies`, `/refund`). |
-| **16. Security & SSRF Gate** | `GREEN` | Central `validateExternalUrl()` blocks localhost, RFC 1918 private IPv4, private IPv6 (`::1`, `fe80::`), cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`), credentialed URLs, and unsafe redirects across all endpoints. |
-| **17. Observability & Redaction** | `GREEN` | Structured JSON request logging with unique `requestId`, automated sensitive data redaction (`redactSensitive`), sanitized `ApiUsage` metering, and liveness/readiness probes (`/health`, `/ready`). |
-| **18. Backups & Recovery** | `GREEN` | Documented automated PostgreSQL WAL archiving (PITR), daily physical snapshots, 30-day retention, and outbox self-healing recovery procedures in `docs/BACKUP_RECOVERY.md`. |
-| **19. Deployment Infrastructure** | `GREEN` | Multi-stage Docker packaging, non-root execution guidelines, Nginx/Cloudflare reverse proxy TLS termination architectures, and sanitized `.env.example`. |
+| **1. Modular Monorepo Architecture** | `GREEN` | Strictly decoupled `apps/web` (SPA), `apps/api` (REST), `apps/worker` (BullMQ Daemon), `packages/database`, `packages/shared`, `packages/config`. No cross-boundary imports. Verified via build checks. |
+| **2. Database Schema & Multi-Tenancy** | `GREEN` | PostgreSQL with Prisma ORM. Strict `where: { organizationId }` query isolation, composite cursor indexes, unique constraints on `(organizationId, url)`. Verified via integration suites. |
+| **3. Redis & Concurrency Management** | `GREEN` | Redis 7+ used for 14 BullMQ queues, multi-tier sliding-window rate limiters, session tracking, and distributed locks. PostgreSQL is the sole source of business truth. |
+| **4. Background Queues & Stalled Recovery** | `GREEN` | BullMQ workers (`audit`, `monitoring`, `report`, `webhook`, `agency-*`) with isolated concurrency, exponential backoff, dead-letter logging, and graceful shutdown handlers on SIGTERM/SIGINT. |
+| **5. Authentication & Session Security** | `GREEN` | HttpOnly, SameSite=Strict refresh cookies with token rotation & reuse detection, short-lived JWT access tokens, argon2/scrypt password hashing, and session revocation. Zero Firebase. |
+| **6. Role-Based Access Control (RBAC)** | `GREEN` | 6-tier role model (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`, `AGENCY_ADMIN`, `AGENCY_MEMBER`) verified server-side across all controllers. |
+| **7. Core Audit Engine** | `GREEN` | URL normalization, SSRF outbound validator, multi-category diagnostic scanning (Lead, SEO, Ad, Security), weighted scoring (0–100), and quantified business impact calculation. |
+| **8. Continuous Watchdog Monitoring** | `GREEN` | Multi-page health check engine with distributed locking, response time tracking, TLS expiry checks, baseline diffing, regression tracking, and canonical `AlertStatus` lifecycle. |
+| **9. Diagnostic Reports & Share Links** | `GREEN` | Immutable JSON snapshots (`Report.snapshotData`), high-entropy SHA-256 share tokens (`lg_share_...`), scrypt password protection, brute-force rate limits (10 attempts/min), and sanitized HTML/PDF generation. |
+| **10. Public Developer REST API** | `GREEN` | Scoped API keys (`lg_live_...`), category-based Redis rate limits (`AUDIT_RUN`, `MONITORING_RUN`, `READ`), deterministic `(createdAt, id)` tuple cursor pagination, database-backed idempotency, and OpenAPI 3.1 schema. |
+| **11. Webhook Outbox & Dispatcher** | `GREEN` | Transactional Outbox pattern (`OutboxEvent`), HMAC-SHA256 signatures with 300s replay window, destination SSRF blocking, manual redirect hop validation, and non-retryable 4xx handling. |
+| **12. Agency Platform & Widget** | `GREEN` | Multi-client workspace delegation, CSV prospect ingestion, competitor radar benchmarks, embeddable lead capture widget with origin security, and AI-grounded pitch generator with hallucination validation. |
+| **13. Superadmin Governance** | `GREEN` | Administrative user moderation, organization suspension, security event tracking, and tamper-evident audit logging in `AdminAuditLog`. |
+| **14. Frontend UI/UX & Design System** | `GREEN` | Professional slate/dark theme, SVG icon system (replacing emojis), responsive tables, loading skeletons, empty states, error retry boundaries, and public legal notices. |
+| **15. Outbound SSRF Gate** | `GREEN` | Central `validateExternalUrl()` blocks loopback (`127.0.0.1`), RFC 1918 private IPv4, private IPv6 (`::1`, `fe80::`), cloud metadata endpoints (`169.254.169.254`), credentialed URLs, and unsafe redirect hops. |
+| **16. Observability & Redaction** | `GREEN` | Structured JSON request logging with unique `requestId`, automated sensitive data redaction (`redactSensitive`), sanitized `ApiUsage` metering, and liveness/readiness probes (`/health`, `/ready`). |
+| **17. Commercial Billing (Razorpay)** | `YELLOW` | Code & webhook state machine fully verified against test fixtures with integer paise accuracy. Live payment processing requires provisioning production `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`. |
+| **18. Report Cloud Storage (S3)** | `YELLOW` | Local storage (`uploads/reports/`) fully implemented and tested. S3 object storage interface implemented in `pdfWorker.ts`, requiring cloud bucket provisioning (`S3_BUCKET`, `S3_REGION`, credentials). |
+| **19. Continuous Backups (PITR / Cloud Sync)** | `YELLOW` | Database dump/restore procedures and retention cleanup scripts (`RetentionService`) implemented and verified. Production WAL streaming and off-site cloud storage replication require cloud infrastructure setup (AWS RDS / Cloud SQL). |
 | **20. Zero Firebase Mandate** | `GREEN` | Zero production Firebase dependencies (`grep -rn "firebase"` confirmed 0 references). |
 
 ---
@@ -62,12 +62,3 @@ Architecture: Decoupled Monorepo (Node.js/TypeScript, React 19 + Vite, Express, 
   - **p50**: ~0.08 ms
   - **p95**: ~0.21 ms
   - **p99**: ~0.45 ms
-
----
-
-## 4. Known Operational Boundaries & Retention Policies
-
-1. **API Usage Retention**: Raw `ApiUsage` request logs are retained for 90 days. Aggregated counts can be rolled up for annual reporting.
-2. **Webhook Delivery History**: `WebhookDelivery` records are retained for 60 days.
-3. **Outbox Events**: Processed `OutboxEvent` records are retained for 30 days.
-4. **PDF Render Limits**: Standalone HTML export templates are capped at 500 KB; remote logo image downloads are capped at 1 MB with a 5-second connection timeout.

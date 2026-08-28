@@ -53,6 +53,12 @@ jobs:
         env:
           DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
 
+      - name: Validate Database Schema Migrations
+        run: npx prisma db push --skip-generate
+        working-directory: packages/database
+        env:
+          DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
+
       - name: Run Typecheck
         run: npm run typecheck --workspaces
 
