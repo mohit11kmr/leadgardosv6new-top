@@ -1,4 +1,12 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
 import { z } from 'zod';
+
+// Load .env from current directory or root directory
+dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
 export const config = z
   .object({
