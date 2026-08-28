@@ -41,6 +41,7 @@ import {
   CookiePolicyView,
   RefundPolicyView,
 } from '../features/legal/LegalViews.js';
+import { LandingPageView } from '../features/landing/LandingPageView.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
@@ -328,7 +329,7 @@ export function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="/" element={<Navigate to={authenticated ? '/dashboard' : '/login'} replace />} />
+        <Route path="/" element={<LandingPageView />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
