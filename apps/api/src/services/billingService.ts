@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { db } from '@leadguard/database';
 import { razorpayProvider } from '../billing/razorpayProvider.js';
 import { recordSecurityEvent } from '../auth.js';
+import { systemGuestOrganizationService } from './systemGuestOrganizationService.js';
 
 export const DEFAULT_COMMERCIAL_PLANS = [
   {
@@ -580,6 +581,278 @@ export class BillingService {
         payment: { select: { id: true, amountInPaise: true, currency: true, createdAt: true } },
       },
     });
+  }
+
+  /**
+   * Guest Express Fix Checkout - creates order for guest scans
+   * Uses the system guest organization for billing
+   */
+  async createGuestExpressFixCheckout(
+    websiteId: string,
+    auditId: string,
+    customerEmail: string,
+    customerName?: string
+  ) {
+    const amountInPaise = 299900; // Authoritative server-side price (₹2,999)
+    const systemGuestOrgId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
+
+    // Idempotency: check if there's an existing order for this audit
+    const existingEvent = await db.billingEvent.findFirst({
+      where: {
+        organizationId: systemGuestOrgId,
+        type: 'ORDER_CREATED',
+        data: {
+          path: ['auditId'],
+          equals: auditId,
+        },
+      },
+    });
+
+    if (existingEvent && existingEvent.data) {
+      const orderData = existingEvent.data as {
+        orderId: string;
+        amount: number;
+        currency: string;
+        keyId: string;
+      };
+      return {
+        orderId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        keyId: orderData.keyId,
+        purpose: 'EXPRESS_FIX',
+        reused: true,
+      };
+    }
+
+    const orderResult = await razorpayProvider.createOrder({
+      amountInPaise,
+      currency: 'INR',
+      receipt: `gef_${Date.now()}`,
+      notes: {
+        organizationId: systemGuestOrgId,
+        websiteId,
+        auditId,
+        customerEmail,
+        customerName: customerName || '',
+        product: 'EXPRESS_FIX_GUEST',
+      },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId: systemGuestOrgId,
+        type: 'ORDER_CREATED',
+        providerEventId: orderResult.orderId,
+        data: {
+          orderId: orderResult.orderId,
+          amount: amountInPaise,
+          currency: 'INR',
+          keyId: orderResult.keyId,
+          purpose: 'EXPRESS_FIX',
+          websiteId,
+          auditId,
+          customerEmail,
+          customerName: customerName || '',
+        },
+      },
+    });
+
+    return {
+      orderId: orderResult.orderId,
+      amount: amountInPaise,
+      currency: 'INR',
+      keyId: orderResult.keyId,
+      purpose: 'EXPRESS_FIX',
+    };
+  }
+
+  /**
+   * Guest Express Fix Payment Verification
+   * Verifies payment for guest scans using system guest organization
+   */
+  async verifyGuestExpressFixPayment(
+    orderId: string,
+    paymentId: string,
+    signature: string,
+    websiteId: string,
+    auditId: string
+  ) {
+    // 1. Verify cryptographic signature
+    const isValid = razorpayProvider.verifyPaymentSignature({
+      orderId,
+      paymentId,
+      signature,
+    });
+
+    if (!isValid) {
+      await recordSecurityEvent('SUSPICIOUS_PAYMENT_SIGNATURE', null, null, {
+        orderId,
+        paymentId,
+      });
+      throw new Error('Invalid payment signature. Verification failed.');
+    }
+
+    // 2. Verify the order belongs to a guest scan
+    const billingEvent = await db.billingEvent.findFirst({
+      where: {
+        type: 'ORDER_CREATED',
+        providerEventId: orderId,
+        data: {
+          path: ['auditId'],
+          equals: auditId,
+        },
+      },
+    });
+
+    if (!billingEvent) {
+      throw new Error('Order not found or does not match guest scan');
+    }
+
+    const systemGuestOrgId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
+
+    // 3. Verify order binding and amount
+    const orderData = billingEvent.data as {
+      orderId: string;
+      amount: number;
+      currency: string;
+      websiteId: string;
+      auditId: string;
+      customerEmail?: string;
+      customerName?: string;
+    };
+
+    if (orderData.orderId !== orderId) {
+      throw new Error('Order ID mismatch');
+    }
+    if (orderData.amount !== 299900) {
+      throw new Error('Amount mismatch');
+    }
+    if (orderData.currency !== 'INR') {
+      throw new Error('Currency mismatch');
+    }
+    if (orderData.websiteId !== websiteId) {
+      throw new Error('Website ID mismatch');
+    }
+    if (orderData.auditId !== auditId) {
+      throw new Error('Audit ID mismatch');
+    }
+
+    // 4. Prevent duplicate payment processing (Idempotency)
+    const existing = await db.payment.findUnique({
+      where: { providerPaymentId: paymentId },
+    });
+    if (existing) {
+      return { payment: existing, duplicate: true };
+    }
+
+    // 5. Create Payment & Invoice record
+    const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
+    const amountInPaise = 299900; // Authoritative price
+
+    const [payment, invoice] = await db.$transaction([
+      db.payment.create({
+        data: {
+          organizationId: systemGuestOrgId,
+          provider: 'RAZORPAY',
+          providerPaymentId: paymentId,
+          providerOrderId: orderId,
+          providerSignature: signature,
+          amountInPaise,
+          currency: 'INR',
+          status: 'CAPTURED',
+          purpose: 'EXPRESS_FIX',
+          metadata: {
+            websiteId,
+            auditId,
+            customerEmail: orderData.customerEmail,
+            customerName: orderData.customerName,
+            verifiedAt: new Date().toISOString(),
+          },
+        },
+      }),
+      db.invoice.create({
+        data: {
+          organizationId: systemGuestOrgId,
+          invoiceNumber,
+          amountInPaise,
+          currency: 'INR',
+          status: 'PAID',
+          paidAt: new Date(),
+          billingAddress: { country: 'IN' },
+          taxInfo: { gstin: null, taxType: 'GST_INCLUSIVE' },
+        },
+      }),
+      db.billingEvent.create({
+        data: {
+          organizationId: systemGuestOrgId,
+          type: 'PAYMENT_CAPTURED',
+          providerEventId: paymentId,
+          data: {
+            amount: amountInPaise,
+            purpose: 'EXPRESS_FIX',
+            invoiceNumber,
+            websiteId,
+            auditId,
+            customerEmail: orderData.customerEmail,
+            customerName: orderData.customerName,
+          },
+        },
+      }),
+    ]);
+
+    // 6. Create fulfillment record
+    await this.createExpressFixFulfillment(
+      systemGuestOrgId,
+      websiteId,
+      auditId,
+      paymentId
+    );
+
+    // 7. Update fulfillment status to PAID
+    await this.updateExpressFixFulfillment(paymentId, 'PAID');
+
+    return { payment, invoice, duplicate: false };
+  }
+
+  /**
+   * Get Express Fix fulfillment status for public access (by fulfillment ID)
+   */
+  async getExpressFixFulfillmentStatus(fulfillmentId: string) {
+    const fulfillment = await db.expressFixFulfillment.findUnique({
+      where: { id: fulfillmentId },
+      include: {
+        website: { select: { id: true, domain: true, url: true } },
+        audit: { select: { id: true, status: true, createdAt: true } },
+        payment: { select: { id: true, amountInPaise: true, currency: true, createdAt: true } },
+      },
+    });
+
+    if (!fulfillment) {
+      return null;
+    }
+
+    // Return safe public data only
+    return {
+      id: fulfillment.id,
+      status: fulfillment.status,
+      website: {
+        domain: fulfillment.website.domain,
+        url: fulfillment.website.url,
+      },
+      audit: {
+        id: fulfillment.audit?.id,
+        status: fulfillment.audit?.status,
+        createdAt: fulfillment.audit?.createdAt,
+      },
+      payment: {
+        amount: fulfillment.payment?.amountInPaise,
+        currency: fulfillment.payment?.currency,
+        createdAt: fulfillment.payment?.createdAt,
+      },
+      createdAt: fulfillment.createdAt,
+      updatedAt: fulfillment.updatedAt,
+    };
   }
 
   /**

@@ -2,9 +2,11 @@ import { db } from '@leadguard/database';
 import {
   validateExternalUrl,
   normalizeUrl,
+  getClientIp,
 } from '@leadguard/shared';
 import { auditQueue } from '../../queue.js';
 import { redisClient } from '../../middleware/rateLimiters.js';
+import { systemGuestOrganizationService } from '../systemGuestOrganizationService.js';
 import type { PublicAuditDTO, PublicWebsiteDTO } from '../../dtos/public.js';
 
 export class GuestScanError extends Error {
@@ -22,7 +24,7 @@ export interface GuestScanResult {
   website: PublicWebsiteDTO;
 }
 
-export interface GuestScanError {
+export interface GuestScanErrorResponse {
   code: string;
   message: string;
 }
@@ -34,19 +36,28 @@ export class GuestScanService {
   private readonly GUEST_AUDIT_RETENTION_DAYS = 7;
   private readonly GUEST_AUDIT_MAX_PAGES = 5;
   private readonly GUEST_AUDIT_MAX_DEPTH = 1;
+  private systemGuestOrgId: string | null = null;
+
+  private async getSystemGuestOrgId(): Promise<string> {
+    if (!this.systemGuestOrgId) {
+      this.systemGuestOrgId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
+    }
+    return this.systemGuestOrgId;
+  }
 
   async createGuestScan(
     url: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    clientIp?: string
   ): Promise<GuestScanResult> {
     if (!url) {
       throw this.createError('INVALID_REQUEST', 'URL is required');
     }
 
-    const clientIp = this.getClientIdentifier();
+    const ip = clientIp || 'unknown';
     const domain = this.extractDomain(url);
 
-    await this.checkGuestRateLimits(clientIp, domain);
+    await this.checkGuestRateLimits(ip, domain);
 
     let normalized: string;
     try {
@@ -56,21 +67,23 @@ export class GuestScanService {
       throw this.createError('SSRF_BLOCKED', `URL validation failed: ${err.message}`);
     }
 
+    const orgId = await this.getSystemGuestOrgId();
+
     if (idempotencyKey) {
-      const existing = await this.getGuestAuditByIdempotencyKey(idempotencyKey);
+      const existing = await this.getGuestAuditByIdempotencyKey(orgId, idempotencyKey);
       if (existing) {
         return this.formatGuestScanResult(existing);
       }
     }
 
     let website = await db.website.findFirst({
-      where: { normalizedUrl: normalized, organizationId: 'guest' },
+      where: { normalizedUrl: normalized, organizationId: orgId },
     });
 
     if (!website) {
       website = await db.website.create({
         data: {
-          organizationId: 'guest',
+          organizationId: orgId,
           url,
           domain,
           normalizedUrl: normalized,
@@ -82,7 +95,7 @@ export class GuestScanService {
 
     const existingActiveGuestAudit = await db.audit.findFirst({
       where: {
-        organizationId: 'guest',
+        organizationId: orgId,
         websiteId: website.id,
         status: { in: ['QUEUED', 'RUNNING'] },
       },
@@ -94,7 +107,7 @@ export class GuestScanService {
 
     const audit = await db.audit.create({
       data: {
-        organizationId: 'guest',
+        organizationId: orgId,
         websiteId: website.id,
         status: 'QUEUED',
         idempotencyKey: idempotencyKey || null,
@@ -117,14 +130,15 @@ export class GuestScanService {
       },
     }, { jobId: audit.id });
 
-    await this.recordGuestRateLimit(clientIp, domain);
+    await this.recordGuestRateLimit(ip, domain);
 
     return this.formatGuestScanResult(audit);
   }
 
   async getGuestScanResult(scanId: string): Promise<PublicAuditDTO | null> {
+    const orgId = await this.getSystemGuestOrgId();
     const audit = await db.audit.findFirst({
-      where: { id: scanId, organizationId: 'guest' },
+      where: { id: scanId, organizationId: orgId },
       include: {
         website: { select: { id: true, url: true, name: true, domain: true } },
         score: true,
@@ -155,8 +169,9 @@ export class GuestScanService {
   }
 
   async getGuestScanStatus(scanId: string): Promise<{ status: string; progress: number; progressStage: string } | null> {
+    const orgId = await this.getSystemGuestOrgId();
     const audit = await db.audit.findFirst({
-      where: { id: scanId, organizationId: 'guest' },
+      where: { id: scanId, organizationId: orgId },
       select: { status: true, progress: true, progressStage: true },
     });
 
@@ -212,10 +227,6 @@ export class GuestScanService {
     await multi.exec();
   }
 
-  private getClientIdentifier(): string {
-    return 'anonymous';
-  }
-
   private extractDomain(url: string): string {
     try {
       return new URL(url).hostname;
@@ -224,9 +235,9 @@ export class GuestScanService {
     }
   }
 
-  private async getGuestAuditByIdempotencyKey(idempotencyKey: string) {
+  private async getGuestAuditByIdempotencyKey(orgId: string, idempotencyKey: string) {
     return db.audit.findFirst({
-      where: { organizationId: 'guest', idempotencyKey },
+      where: { organizationId: orgId, idempotencyKey },
       include: {
         website: { select: { id: true, url: true, name: true, domain: true } },
         score: true,
@@ -245,6 +256,32 @@ export class GuestScanService {
         domain: audit.website.domain,
       },
     };
+  }
+
+  private sanitizeEvidence(evidence: any): any {
+    if (!evidence || typeof evidence !== 'object') {
+      return evidence;
+    }
+    const sanitized = { ...evidence };
+    // Remove potentially sensitive fields
+    delete sanitized.headers;
+    delete sanitized.cookies;
+    delete sanitized.authorization;
+    delete sanitized.token;
+    delete sanitized.secret;
+    delete sanitized.password;
+    delete sanitized.key;
+    delete sanitized.signature;
+    delete sanitized.rawBody;
+    delete sanitized.requestBody;
+    delete sanitized.responseBody;
+    // Recursively sanitize nested objects
+    for (const key of Object.keys(sanitized)) {
+      if (sanitized[key] && typeof sanitized[key] === 'object') {
+        sanitized[key] = this.sanitizeEvidence(sanitized[key]);
+      }
+    }
+    return sanitized;
   }
 
   private formatPublicAuditDto(audit: any): PublicAuditDTO {
@@ -276,7 +313,7 @@ export class GuestScanService {
             scoreImpact: f.scoreImpact,
             recommendation: f.recommendation,
             affectedUrl: f.affectedUrl,
-            evidence: f.evidence,
+            evidence: this.sanitizeEvidence(f.evidence),
             normalizedIssueKey: f.normalizedIssueKey,
           }))
         : undefined,

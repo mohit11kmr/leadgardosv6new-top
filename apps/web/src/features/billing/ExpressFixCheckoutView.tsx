@@ -33,6 +33,7 @@ interface ScanData {
     severity: string;
     scoreImpact: number;
   }> | undefined;
+  status: string;
 }
 
 export function ExpressFixCheckoutView() {
@@ -50,6 +51,9 @@ export function ExpressFixCheckoutView() {
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rzpLoaded, setRzpLoaded] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(true);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
 
   useEffect(() => {
     const script = document.createElement('script');
@@ -72,16 +76,8 @@ export function ExpressFixCheckoutView() {
       }
 
       try {
-        const [scanData, orderData] = await Promise.all([
-          apiClient<ScanData>(`/public/scan/${scanId}`),
-          apiClient<ExpressFixOrder>('/billing/checkout/express-fix', {
-            method: 'POST',
-            body: JSON.stringify({ websiteId, auditId: auditId || undefined }),
-          }),
-        ]);
-
+        const scanData = await apiClient<ScanData>(`/public/scan/${scanId}`);
         setScan(scanData);
-        setOrder(orderData);
         setLoading(false);
       } catch (err: any) {
         setError(err.message || 'Failed to load checkout');
@@ -91,6 +87,35 @@ export function ExpressFixCheckoutView() {
 
     fetchData();
   }, [scanId, websiteId, auditId]);
+
+  const handleCreateOrder = async () => {
+    if (!email || !email.includes('@')) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    if (!scanId) {
+      setError('Missing scan information');
+      return;
+    }
+
+    setCreatingOrder(true);
+    setError(null);
+
+    try {
+      const orderData = await apiClient<ExpressFixOrder>('/public/express-fix/checkout', {
+        method: 'POST',
+        body: JSON.stringify({ scanId, email, name: name || undefined }),
+      });
+
+      setOrder(orderData);
+      setShowEmailForm(false);
+      setCreatingOrder(false);
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || err.message || 'Failed to create order');
+      setCreatingOrder(false);
+    }
+  };
 
   const handlePayment = async () => {
     if (!order || !rzpLoaded || !window.Razorpay) {
@@ -116,7 +141,10 @@ export function ExpressFixCheckoutView() {
           setCreatingOrder(false);
         }
       },
-      prefill: {},
+      prefill: {
+        email: email,
+        name: name || undefined,
+      },
       notes: {
         scan_id: scanId || '',
         website_id: websiteId || '',
@@ -141,14 +169,13 @@ export function ExpressFixCheckoutView() {
   };
 
   const verifyPayment = async (response: any) => {
-    const result = await apiClient<{ success: boolean; data: any }>('/billing/checkout/express-fix/verify', {
+    const result = await apiClient<{ success: boolean; data: any }>('/public/express-fix/verify', {
       method: 'POST',
       body: JSON.stringify({
         orderId: response.razorpay_order_id,
         paymentId: response.razorpay_payment_id,
         signature: response.razorpay_signature,
-        websiteId,
-        auditId: auditId || undefined,
+        scanId,
       }),
     });
 
@@ -259,7 +286,7 @@ export function ExpressFixCheckoutView() {
     );
   }
 
-  if (!order || !scan) {
+  if (!scan) {
     return null;
   }
 
@@ -360,54 +387,150 @@ export function ExpressFixCheckoutView() {
           </ul>
         </div>
 
-        {/* Secure Payment */}
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px', marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <IconLock size={18} color="#10b981" />
-            Secure Payment — ₹2,999 (GST Inclusive)
-          </h3>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px', color: '#94a3b8' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconLock size={14} /> Razorpay Secure Checkout</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconShield size={14} /> PCI-DSS Compliant</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconClock size={14} /> Instant Confirmation</span>
+        {/* Email Collection Form */}
+        {showEmailForm && (
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '24px', marginBottom: '24px' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#fff', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <IconMail size={20} color="#38bdf8" />
+              Contact Information
+            </h3>
+            <p style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '20px' }}>
+              We&apos;ll send your Express Fix remediation summary to this email address.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#cbd5e1', marginBottom: '6px' }}>
+                  Email Address <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  required
+                  style={{
+                    width: '100%',
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    color: '#fff',
+                    fontSize: '15px',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#cbd5e1', marginBottom: '6px' }}>
+                  Name (optional)
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your Name"
+                  style={{
+                    width: '100%',
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    color: '#fff',
+                    fontSize: '15px',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+            </div>
+            {error && (
+              <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '14px' }}>
+                {error}
+              </div>
+            )}
+            <button
+              onClick={handleCreateOrder}
+              disabled={creatingOrder || !email}
+              style={{
+                width: '100%',
+                background: creatingOrder || !email ? '#334155' : 'linear-gradient(135deg, #2563eb, #38bdf8)',
+                color: '#fff',
+                border: 'none',
+                padding: '16px 32px',
+                borderRadius: '12px',
+                fontSize: '16px',
+                fontWeight: '700',
+                cursor: creatingOrder || !email ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                boxShadow: creatingOrder || !email ? 'none' : '0 4px 20px rgba(37, 99, 235, 0.4)',
+                marginTop: '8px',
+              }}
+            >
+              {creatingOrder && (
+                <svg style={{ width: '20px', height: '20px', animation: 'spin 1s linear infinite' }} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
+                </svg>
+              )}
+              {creatingOrder ? 'Creating Order…' : 'Continue to Secure Checkout — ₹2,999'}
+              <style dangerouslySetInnerHTML={{ __html: '@keyframes spin { to { transform: rotate(360deg); } }' }} />
+            </button>
           </div>
-        </div>
+        )}
 
-        {/* Pay Button */}
-        <button
-          onClick={handlePayment}
-          disabled={creatingOrder || !rzpLoaded}
-          style={{
-            width: '100%',
-            background: creatingOrder ? '#334155' : 'linear-gradient(135deg, #2563eb, #38bdf8)',
-            color: '#fff',
-            border: 'none',
-            padding: '18px 32px',
-            borderRadius: '12px',
-            fontSize: '18px',
-            fontWeight: '700',
-            cursor: creatingOrder ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '12px',
-            boxShadow: creatingOrder ? 'none' : '0 4px 24px rgba(37, 99, 235, 0.4)',
-            marginBottom: '16px',
-          }}
-        >
-          {creatingOrder && (
-            <svg style={{ width: '22px', height: '22px', animation: 'spin 1s linear infinite' }} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
-            </svg>
-          )}
-          {creatingOrder ? 'Opening Secure Checkout…' : 'Pay ₹2,999 — Secure Checkout'}
-          <style dangerouslySetInnerHTML={{ __html: '@keyframes spin { to { transform: rotate(360deg); } }' }} />
-        </button>
+        {/* Secure Payment & Pay Button */}
+        {!showEmailForm && order && (
+          <>
+            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px', marginBottom: '24px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IconLock size={18} color="#10b981" />
+                Secure Payment — ₹2,999 (GST Inclusive)
+              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px', color: '#94a3b8' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconLock size={14} /> Razorpay Secure Checkout</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconShield size={14} /> PCI-DSS Compliant</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><IconClock size={14} /> Instant Confirmation</span>
+              </div>
+            </div>
 
-        <p style={{ textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
-          <IconHelpCircle size={14} style={{ verticalAlign: 'middle' }} />
-          <span style={{ marginLeft: '6px' }}>This is a manual expert review service, not automated code changes. 100% refund if no actionable fixes found. <Link to="/terms" style={{ color: '#38bdf8', textDecoration: 'underline' }}>Terms apply</Link>.</span>
-        </p>
+            {/* Pay Button */}
+            <button
+              onClick={handlePayment}
+              disabled={creatingOrder || !rzpLoaded}
+              style={{
+                width: '100%',
+                background: creatingOrder ? '#334155' : 'linear-gradient(135deg, #2563eb, #38bdf8)',
+                color: '#fff',
+                border: 'none',
+                padding: '18px 32px',
+                borderRadius: '12px',
+                fontSize: '18px',
+                fontWeight: '700',
+                cursor: creatingOrder ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '12px',
+                boxShadow: creatingOrder ? 'none' : '0 4px 24px rgba(37, 99, 235, 0.4)',
+                marginBottom: '16px',
+              }}
+            >
+              {creatingOrder && (
+                <svg style={{ width: '22px', height: '22px', animation: 'spin 1s linear infinite' }} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
+                </svg>
+              )}
+              {creatingOrder ? 'Opening Secure Checkout…' : 'Pay ₹2,999 — Secure Checkout'}
+              <style dangerouslySetInnerHTML={{ __html: '@keyframes spin { to { transform: rotate(360deg); } }' }} />
+            </button>
+
+            <p style={{ textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
+              <IconHelpCircle size={14} style={{ verticalAlign: 'middle' }} />
+              <span style={{ marginLeft: '6px' }}>This is a manual expert review service, not automated code changes. 100% refund if no actionable fixes found. <Link to="/terms" style={{ color: '#38bdf8', textDecoration: 'underline' }}>Terms apply</Link>.</span>
+            </p>
+          </>
+        )}
       </main>
 
       <footer style={{ borderTop: '1px solid #1e293b', padding: '32px', background: '#090d16', textAlign: 'center' }}>

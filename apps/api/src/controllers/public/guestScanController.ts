@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { guestScanService } from '../../services/public/guestScanService.js';
+import { getClientIp } from '@leadguard/shared';
 
 export const guestScanRouter = Router();
 
@@ -13,8 +14,9 @@ guestScanRouter.post('/free-scan', async (req: Request, res: Response, next: Nex
   try {
     const input = guestScanSchema.parse(req.body);
     const idempotencyKey = req.headers['idempotency-key'] as string | undefined || input.idempotencyKey;
+    const clientIp = getClientIp(req);
 
-    const result = await guestScanService.createGuestScan(input.url, idempotencyKey);
+    const result = await guestScanService.createGuestScan(input.url, idempotencyKey, clientIp);
 
     res.status(201).json({
       success: true,

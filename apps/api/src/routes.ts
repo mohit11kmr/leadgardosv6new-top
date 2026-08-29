@@ -43,6 +43,7 @@ import { publicReportRouter } from './controllers/public/publicReportController.
 import { publicMonitoringRouter } from './controllers/public/publicMonitoringController.js';
 import { publicTestimonialsRouter } from './controllers/public/publicTestimonialsController.js';
 import { guestScanRouter } from './controllers/public/guestScanController.js';
+import { guestExpressFixRouter } from './controllers/public/guestExpressFixController.js';
 import { openApiRouter } from './openapi.js';
 import {
   authLimiter,
@@ -227,6 +228,9 @@ apiRouter.use('/public/testimonials', publicTestimonialsRouter);
 
 // --- Public Guest Scan (No Authentication Required) ---
 apiRouter.use('/public', guestScanRouter);
+
+// --- Public Guest Express Fix Checkout (No Authentication Required) ---
+apiRouter.use('/public/express-fix', guestExpressFixRouter);
 
 apiRouter.use('/public', openApiRouter);
 

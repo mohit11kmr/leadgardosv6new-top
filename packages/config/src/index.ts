@@ -37,5 +37,8 @@ export const config = z
     AUDIT_RATE_LIMIT: z.coerce.number().positive().default(30),
     API_RATE_LIMIT: z.coerce.number().positive().default(150),
     WEBHOOK_RATE_LIMIT: z.coerce.number().positive().default(100),
+    // Guest Scan Configuration
+    SYSTEM_GUEST_ORGANIZATION_ID: z.string().uuid().optional(),
+    SYSTEM_GUEST_ORGANIZATION_NAME: z.string().default('LeadGuard Guest Scans'),
   })
   .parse(process.env);
