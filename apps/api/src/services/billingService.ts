@@ -658,6 +658,18 @@ export class BillingService {
       },
     });
 
+    console.log(JSON.stringify({
+      level: 'info',
+      service: 'billing',
+      event: 'express_fix_order_created',
+      orderId: orderResult.orderId,
+      auditId,
+      websiteId,
+      organizationId: systemGuestOrgId,
+      amount: amountInPaise,
+      currency: 'INR',
+    }));
+
     return {
       orderId: orderResult.orderId,
       amount: amountInPaise,
@@ -679,6 +691,16 @@ export class BillingService {
     websiteId: string,
     auditId: string
   ) {
+    console.log(JSON.stringify({
+      level: 'info',
+      service: 'billing',
+      event: 'express_fix_payment_verification_started',
+      orderId,
+      paymentId,
+      auditId,
+      websiteId,
+    }));
+
     // 1. Verify cryptographic signature
     const isValid = razorpayProvider.verifyPaymentSignature({
       orderId,
@@ -765,7 +787,17 @@ export class BillingService {
       throw new Error('Provider order currency mismatch');
     }
     if (razorpayOrder.status !== 'paid' && razorpayOrder.status !== 'attempted') {
-      throw new Error(`Provider order not in payable state: ${razorpayOrder.status}`);
+      console.log(JSON.stringify({
+        level: 'warn',
+        service: 'billing',
+        event: 'express_fix_payment_rejected',
+        reason: 'provider_order_not_payable',
+        orderId,
+        paymentId,
+        auditId,
+        websiteId,
+      }));
+      throw new Error('Payment could not be verified. No order was fulfilled.');
     }
 
     // 6. Verify provider payment details match
@@ -782,7 +814,17 @@ export class BillingService {
       throw new Error('Provider payment currency mismatch');
     }
     if (!razorpayPayment.captured) {
-      throw new Error(`Provider payment not captured: ${razorpayPayment.status}`);
+      console.log(JSON.stringify({
+        level: 'warn',
+        service: 'billing',
+        event: 'express_fix_payment_rejected',
+        reason: 'provider_payment_not_captured',
+        orderId,
+        paymentId,
+        auditId,
+        websiteId,
+      }));
+      throw new Error('Payment could not be verified. No order was fulfilled.');
     }
 
     // 7. Verify stored order binding and amount
@@ -958,7 +1000,7 @@ export class BillingService {
     rawBody: string,
     signature: string,
     eventPayload: Record<string, unknown>
-  ) {
+  ): Promise<{ received: boolean; duplicate: boolean }> {
     // 1. Verify HMAC Webhook signature against raw bytes
     const isValid = razorpayProvider.verifyWebhookSignature({
       rawBody,
@@ -997,7 +1039,7 @@ export class BillingService {
     const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
     const subscriptionNotes = (subscriptionEntity.notes as Record<string, string>) || {};
     const notes = { ...paymentNotes, ...subscriptionNotes };
-    const organizationId = notes.organizationId || null;
+    const organizationId = (notes.organizationId as string) || null;
 
     // Log webhook received
     console.log(JSON.stringify({
@@ -1012,9 +1054,21 @@ export class BillingService {
     // 4. Process event based on type
     if (organizationId) {
       await db.$transaction(async (tx) => {
-        await this.processWebhookTransaction(tx, organizationId, eventId, eventType, eventPayload, paymentEntity, subscriptionEntity, paymentNotes, payloadData);
+        await this.processWebhookTransaction(
+          tx,
+          organizationId,
+          eventId,
+          eventType,
+          eventPayload,
+          payloadData,
+          paymentEntity,
+          subscriptionEntity,
+          paymentNotes
+        );
       });
     }
+
+    return { received: true, duplicate: false };
   }
 
   /**
@@ -1026,14 +1080,11 @@ export class BillingService {
     eventId: string,
     eventType: string,
     eventPayload: Record<string, unknown>,
-    paymentEntity: any,
-    subscriptionEntity: any,
-    paymentNotes: Record<string, string>,
-    payloadData: Record<string, unknown>
+    payloadData: Record<string, unknown>,
+    paymentEntity: Record<string, unknown>,
+    subscriptionEntity: Record<string, unknown>,
+    paymentNotes: Record<string, string>
   ): Promise<void> {
-    // Extract payment notes at the top to avoid "used before declaration" errors
-    const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
-
     await tx.billingEvent.create({
       data: {
         organizationId,
@@ -1043,9 +1094,12 @@ export class BillingService {
       },
     });
 
+    const paymentEntityTyped = paymentEntity as Record<string, any>;
+    const subscriptionEntityTyped = subscriptionEntity as Record<string, any>;
+
     // Handle subscription activation
     if (eventType === 'subscription.charged' || eventType === 'subscription.activated') {
-      const providerSubscriptionId = subscriptionEntity.id as string;
+      const providerSubscriptionId = subscriptionEntityTyped.id as string;
       if (providerSubscriptionId) {
         const subscription = await tx.subscription.findFirst({
           where: { organizationId, providerSubscriptionId, status: 'CREATED' },
@@ -1073,7 +1127,7 @@ export class BillingService {
 
     // Handle subscription payment failure
     if (eventType === 'subscription.charge_failed' || eventType === 'subscription.paused') {
-      const providerSubscriptionId = subscriptionEntity.id as string;
+      const providerSubscriptionId = subscriptionEntityTyped.id as string;
       if (providerSubscriptionId) {
         const subscription = await tx.subscription.findFirst({
           where: { organizationId, providerSubscriptionId, status: { in: ['CREATED', 'ACTIVE'] } },
@@ -1097,10 +1151,10 @@ export class BillingService {
 
     // Handle Express Fix fulfillment updates - payment.captured
     if (eventType === 'payment.captured') {
-      const paymentId = paymentEntity.id as string;
-      const paymentAmount = paymentEntity.amount as number;
-      const paymentCurrency = paymentEntity.currency as string;
-      
+      const paymentId = paymentEntityTyped.id as string;
+      const paymentAmount = paymentEntityTyped.amount as number;
+      const paymentCurrency = paymentEntityTyped.currency as string;
+
       if (paymentId) {
         console.log(JSON.stringify({
           level: 'info',
@@ -1112,6 +1166,17 @@ export class BillingService {
           currency: paymentCurrency,
           organizationId,
         }));
+
+        // Reconcile the payment record with the provider-confirmed captured state
+        const existingPayment = await tx.payment.findUnique({
+          where: { providerPaymentId: paymentId },
+        });
+        if (existingPayment && existingPayment.status !== 'CAPTURED') {
+          await tx.payment.update({
+            where: { id: existingPayment.id },
+            data: { status: 'CAPTURED' },
+          });
+        }
 
         // Handle Express Fix fulfillment
         if (paymentNotes.purpose === 'EXPRESS_FIX') {
@@ -1136,13 +1201,14 @@ export class BillingService {
           }
         }
       }
+    }
 
     // Handle Express Fix fulfillment updates - payment.failed
     if (eventType === 'payment.failed') {
-      const paymentId = paymentEntity.id as string;
-      const errorCode = paymentEntity.error_code as string | undefined;
-      const errorDescription = paymentEntity.error_description as string | undefined;
-      
+      const paymentId = paymentEntityTyped.id as string;
+      const errorCode = paymentEntityTyped.error_code as string | undefined;
+      const errorDescription = paymentEntityTyped.error_description as string | undefined;
+
       if (paymentId) {
         console.log(JSON.stringify({
           level: 'warn',
@@ -1155,6 +1221,16 @@ export class BillingService {
           organizationId,
         }));
 
+        const existingPayment = await tx.payment.findUnique({
+          where: { providerPaymentId: paymentId },
+        });
+        if (existingPayment && existingPayment.status !== 'FAILED') {
+          await tx.payment.update({
+            where: { id: existingPayment.id },
+            data: { status: 'FAILED' },
+          });
+        }
+
         // Handle Express Fix fulfillment
         if (paymentNotes.purpose === 'EXPRESS_FIX') {
           const fulfillment = await tx.expressFixFulfillment.findUnique({
@@ -1163,7 +1239,7 @@ export class BillingService {
           if (fulfillment) {
             await tx.expressFixFulfillment.update({
               where: { paymentId },
-              data: { 
+              data: {
                 status: 'FULFILLMENT_FAILED',
                 notes: `Payment failed: ${errorDescription || errorCode || 'Unknown error'}`,
               },
@@ -1173,7 +1249,7 @@ export class BillingService {
                 organizationId,
                 type: 'EXPRESS_FIX_FULFILLMENT_FAILED',
                 providerEventId: paymentId,
-                data: { 
+                data: {
                   fulfillmentId: fulfillment.id,
                   errorCode,
                   errorDescription,
@@ -1183,14 +1259,15 @@ export class BillingService {
           }
         }
       }
+    }
 
     // Handle order.paid (alternative event for order completion)
     if (eventType === 'order.paid') {
-      const orderEntity = (eventPayload.payload?.order as { entity?: Record<string, unknown> })?.entity || {};
+      const orderEntity = (payloadData.order as { entity?: Record<string, unknown> })?.entity || {};
       const orderId = orderEntity.id as string;
       const orderAmount = orderEntity.amount as number;
       const orderCurrency = orderEntity.currency as string;
-      
+
       console.log(JSON.stringify({
         level: 'info',
         service: 'billing',
@@ -1202,185 +1279,6 @@ export class BillingService {
         organizationId,
       }));
     }
-  }
-
-  /**
-   * Idempotent Webhook Handler for Razorpay
-   */
-        await tx.billingEvent.create({
-          data: {
-            organizationId,
-            type: eventType.toUpperCase().replace(/\./g, '_'),
-            providerEventId: eventId,
-            data: eventPayload as object,
-          },
-        });
-
-        // Handle subscription activation
-        if (eventType === 'subscription.charged' || eventType === 'subscription.activated') {
-          const providerSubscriptionId = subscriptionEntity.id as string;
-          if (providerSubscriptionId) {
-            const subscription = await tx.subscription.findFirst({
-              where: { organizationId, providerSubscriptionId, status: 'CREATED' },
-            });
-            if (subscription && this.isValidSubscriptionTransition(subscription.status, 'ACTIVE')) {
-              await tx.subscription.update({
-                where: { id: subscription.id },
-                data: {
-                  status: 'ACTIVE',
-                  currentPeriodStart: new Date(),
-                  currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
-                },
-              });
-              await tx.billingEvent.create({
-                data: {
-                  organizationId,
-                  type: 'SUBSCRIPTION_ACTIVATED',
-                  providerEventId: providerSubscriptionId,
-                  data: { subscriptionId: subscription.id },
-                },
-              });
-            }
-          }
-        }
-
-        // Handle subscription payment failure
-        if (eventType === 'subscription.charge_failed' || eventType === 'subscription.paused') {
-          const providerSubscriptionId = subscriptionEntity.id as string;
-          if (providerSubscriptionId) {
-            const subscription = await tx.subscription.findFirst({
-              where: { organizationId, providerSubscriptionId, status: { in: ['CREATED', 'ACTIVE'] } },
-            });
-            if (subscription) {
-              await tx.subscription.update({
-                where: { id: subscription.id },
-                data: { status: 'PAST_DUE' },
-              });
-              await tx.billingEvent.create({
-                data: {
-                  organizationId,
-                  type: 'SUBSCRIPTION_PAYMENT_FAILED',
-                  providerEventId: providerSubscriptionId,
-                  data: { subscriptionId: subscription.id },
-                },
-              });
-            }
-          }
-        }
-
-        // Handle Express Fix fulfillment updates - payment.captured
-        const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
-        if (eventType === 'payment.captured') {
-          const paymentId = paymentEntity.id as string;
-          const paymentAmount = paymentEntity.amount as number;
-          const paymentCurrency = paymentEntity.currency as string;
-          
-          if (paymentId) {
-            console.log(JSON.stringify({
-              level: 'info',
-              service: 'billing',
-              event: 'razorpay_webhook_payment_captured',
-              eventId,
-              paymentId,
-              amount: paymentAmount,
-              currency: paymentCurrency,
-              organizationId,
-            }));
-
-            // Handle Express Fix fulfillment
-            if (paymentNotes.purpose === 'EXPRESS_FIX') {
-              const fulfillment = await tx.expressFixFulfillment.findUnique({
-                where: { paymentId },
-              });
-              if (fulfillment) {
-                if (fulfillment.status === 'PAYMENT_PENDING' || fulfillment.status === 'FULFILLMENT_PENDING') {
-                  await tx.expressFixFulfillment.update({
-                    where: { paymentId },
-                    data: { status: 'FULFILLMENT_IN_PROGRESS' },
-                  });
-                  await tx.billingEvent.create({
-                    data: {
-                      organizationId,
-                      type: 'EXPRESS_FIX_FULFILLMENT_IN_PROGRESS',
-                      providerEventId: paymentId,
-                      data: { fulfillmentId: fulfillment.id },
-                    },
-                  });
-                }
-              }
-            }
-          }
-
-        // Handle Express Fix fulfillment updates - payment.failed
-        if (eventType === 'payment.failed') {
-          const paymentId = paymentEntity.id as string;
-          const errorCode = paymentEntity.error_code as string | undefined;
-          const errorDescription = paymentEntity.error_description as string | undefined;
-          
-          if (paymentId) {
-            console.log(JSON.stringify({
-              level: 'warn',
-              service: 'billing',
-              event: 'razorpay_webhook_payment_failed',
-              eventId,
-              paymentId,
-              errorCode,
-              errorDescription,
-              organizationId,
-            }));
-
-            // Handle Express Fix fulfillment
-            if (paymentNotes.purpose === 'EXPRESS_FIX') {
-              const fulfillment = await tx.expressFixFulfillment.findUnique({
-                where: { paymentId },
-              });
-              if (fulfillment) {
-                await tx.expressFixFulfillment.update({
-                  where: { paymentId },
-                  data: { 
-                    status: 'FULFILLMENT_FAILED',
-                    notes: `Payment failed: ${errorDescription || errorCode || 'Unknown error'}`,
-                  },
-                });
-                await tx.billingEvent.create({
-                  data: {
-                    organizationId,
-                    type: 'EXPRESS_FIX_FULFILLMENT_FAILED',
-                    providerEventId: paymentId,
-                    data: { 
-                      fulfillmentId: fulfillment.id,
-                      errorCode,
-                      errorDescription,
-                    },
-                  },
-                });
-              }
-            }
-          }
-
-        // Handle order.paid (alternative event for order completion)
-        if (eventType === 'order.paid') {
-          const orderEntity = (payloadData.order as { entity?: Record<string, unknown> })?.entity || {};
-          const orderId = orderEntity.id as string;
-          const orderAmount = orderEntity.amount as number;
-          const orderCurrency = orderEntity.currency as string;
-          
-          console.log(JSON.stringify({
-            level: 'info',
-            service: 'billing',
-            event: 'razorpay_webhook_order_paid',
-            eventId,
-            orderId,
-            amount: orderAmount,
-            currency: orderCurrency,
-            organizationId,
-          }));
-        }
-        }
-      }
-    }
-
-    return { received: true, duplicate: false };
   }
 }
 

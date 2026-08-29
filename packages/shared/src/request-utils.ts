@@ -1,11 +1,16 @@
 import type { Request } from 'express';
 
+/**
+ * Resolves the client IP honoring the Express `trust proxy` configuration.
+ *
+ * When `trust proxy` is enabled, Express populates `req.ip` from the
+ * trusted reverse-proxy chain (x-forwarded-for). When it is disabled
+ * (the default), `req.ip` resolves to the socket's remote address, so a
+ * client-controlled `x-forwarded-for` header cannot be used to spoof
+ * their identity and bypass rate limits.
+ */
 export function getClientIp(req: Request): string {
-  return (
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.socket.remoteAddress ||
-    '127.0.0.1'
-  );
+  return req.ip || req.socket.remoteAddress || '127.0.0.1';
 }
 
 export function getClientUserAgent(req: Request): string | undefined {

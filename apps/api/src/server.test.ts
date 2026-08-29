@@ -8,6 +8,11 @@ process.env.JWT_SECRET ??= 'a'.repeat(32);
 process.env.REFRESH_TOKEN_SECRET ??= 'b'.repeat(32);
 process.env.APP_URL ??= 'http://localhost:5173';
 process.env.API_URL ??= 'http://localhost:4000';
+// Razorpay TEST-mode placeholders so the config schema loads in tests.
+process.env.PAYMENT_PROVIDER_MODE ??= 'TEST';
+process.env.RAZORPAY_KEY_ID ??= 'rzp_test_placeholder_key_id';
+process.env.RAZORPAY_KEY_SECRET ??= 'placeholder_key_secret';
+process.env.RAZORPAY_WEBHOOK_SECRET ??= 'placeholder_webhook_secret';
 
 describe('API Foundation and Tenant Isolation Tests', () => {
   it('returns health status', async () => {

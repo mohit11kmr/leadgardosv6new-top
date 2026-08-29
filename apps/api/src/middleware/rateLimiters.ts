@@ -1,20 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
+import { getClientIp } from '@leadguard/shared';
 
 export const redisClient = new Redis(config.REDIS_URL);
 const isTest = process.env.NODE_ENV === 'test';
-
-function getClientIp(req: Request): string {
-  // Only trust x-forwarded-for if TRUST_PROXY is enabled
-  if (config.TRUST_PROXY) {
-    const forwarded = req.headers['x-forwarded-for'] as string;
-    if (forwarded) {
-      return forwarded.split(',')[0]?.trim() || req.socket.remoteAddress || '127.0.0.1';
-    }
-  }
-  return req.socket.remoteAddress || '127.0.0.1';
-}
 
 export function createRedisRateLimiter(options: {
   keyPrefix: string;
@@ -62,7 +52,21 @@ export function createRedisRateLimiter(options: {
 
       next();
     } catch {
-      next();
+      // Fail-safe rate limiting: never silently disable limits when the
+      // rate-limit store (Redis) is unavailable. Return a controlled
+      // infrastructure response instead of allowing unbounded traffic.
+      if (config.NODE_ENV === 'test') {
+        next();
+        return;
+      }
+      res.status(503).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMITER_UNAVAILABLE',
+          message: 'Rate limiting is temporarily unavailable. Please retry shortly.',
+          requestId: req.header('x-request-id') || '',
+        },
+      });
     }
   };
 }

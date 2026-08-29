@@ -18,6 +18,12 @@ export default defineConfig({
       REFRESH_TOKEN_SECRET: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       APP_URL: 'http://localhost:5173',
       API_URL: 'http://localhost:4000',
+      // Razorpay TEST-mode placeholders so the config schema loads in tests.
+      // These are test-only fixtures and are never used in production code paths.
+      PAYMENT_PROVIDER_MODE: 'TEST',
+      RAZORPAY_KEY_ID: 'rzp_test_placeholder_key_id',
+      RAZORPAY_KEY_SECRET: 'placeholder_key_secret',
+      RAZORPAY_WEBHOOK_SECRET: 'placeholder_webhook_secret',
     },
   },
 });

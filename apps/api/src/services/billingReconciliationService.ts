@@ -32,7 +32,7 @@ export class BillingReconciliationService {
     for (const sub of subscriptions) {
       if (razorpayProvider.mode === 'TEST') {
         // In TEST mode, verify local referential integrity
-        if (!sub.providerSubscriptionId?.startsWith('sub_test_') && !sub.providerSubscriptionId?.startsWith('sub_mock_')) {
+        if (!sub.providerSubscriptionId?.startsWith('sub_test_')) {
           discrepancies.push({
             entityType: 'SUBSCRIPTION',
             entityId: sub.id,
