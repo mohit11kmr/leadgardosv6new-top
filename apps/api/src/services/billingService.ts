@@ -670,6 +670,7 @@ export class BillingService {
   /**
    * Guest Express Fix Payment Verification
    * Verifies payment for guest scans using system guest organization
+   * Includes provider-side verification via Razorpay API
    */
   async verifyGuestExpressFixPayment(
     orderId: string,
@@ -711,7 +712,7 @@ export class BillingService {
 
     const systemGuestOrgId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
 
-    // 3. Verify order binding and amount
+    // 3. Verify order binding and amount from stored billing event
     const orderData = billingEvent.data as {
       orderId: string;
       amount: number;
@@ -738,7 +739,70 @@ export class BillingService {
       throw new Error('Audit ID mismatch');
     }
 
-    // 4. Prevent duplicate payment processing (Idempotency)
+    // 4. Provider-side verification: Fetch order and payment from Razorpay
+    let razorpayOrder: any;
+    let razorpayPayment: any;
+    try {
+      razorpayOrder = await razorpayProvider.fetchOrder(orderId);
+      razorpayPayment = await razorpayProvider.fetchPayment(paymentId);
+    } catch (error) {
+      await recordSecurityEvent('RAZORPAY_PROVIDER_VERIFICATION_FAILED', null, null, {
+        orderId,
+        paymentId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new Error('Provider verification failed. Unable to verify payment with Razorpay.');
+    }
+
+    // 5. Verify provider order details match
+    if (razorpayOrder.id !== orderId) {
+      throw new Error('Provider order ID mismatch');
+    }
+    if (razorpayOrder.amount !== 299900) {
+      throw new Error('Provider order amount mismatch');
+    }
+    if (razorpayOrder.currency !== 'INR') {
+      throw new Error('Provider order currency mismatch');
+    }
+    if (razorpayOrder.status !== 'paid' && razorpayOrder.status !== 'attempted') {
+      throw new Error(`Provider order not in payable state: ${razorpayOrder.status}`);
+    }
+
+    // 6. Verify provider payment details match
+    if (razorpayPayment.id !== paymentId) {
+      throw new Error('Provider payment ID mismatch');
+    }
+    if (razorpayPayment.order_id !== orderId) {
+      throw new Error('Provider payment does not belong to this order');
+    }
+    if (razorpayPayment.amount !== 299900) {
+      throw new Error('Provider payment amount mismatch');
+    }
+    if (razorpayPayment.currency !== 'INR') {
+      throw new Error('Provider payment currency mismatch');
+    }
+    if (!razorpayPayment.captured) {
+      throw new Error(`Provider payment not captured: ${razorpayPayment.status}`);
+    }
+
+    // 7. Verify stored order binding and amount
+    if (orderData.orderId !== orderId) {
+      throw new Error('Order ID mismatch');
+    }
+    if (orderData.amount !== 299900) {
+      throw new Error('Amount mismatch');
+    }
+    if (orderData.currency !== 'INR') {
+      throw new Error('Currency mismatch');
+    }
+    if (orderData.websiteId !== websiteId) {
+      throw new Error('Website ID mismatch');
+    }
+    if (orderData.auditId !== auditId) {
+      throw new Error('Audit ID mismatch');
+    }
+
+    // 8. Prevent duplicate payment processing (Idempotency)
     const existing = await db.payment.findUnique({
       where: { providerPaymentId: paymentId },
     });
@@ -746,7 +810,7 @@ export class BillingService {
       return { payment: existing, duplicate: true };
     }
 
-    // 5. Create Payment & Invoice record
+    // 9. Create Payment & Invoice record with proper state machine
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
     const amountInPaise = 299900; // Authoritative price
 
@@ -768,6 +832,8 @@ export class BillingService {
             customerEmail: orderData.customerEmail,
             customerName: orderData.customerName,
             verifiedAt: new Date().toISOString(),
+            providerPaymentStatus: razorpayPayment.status,
+            providerOrderStatus: razorpayOrder.status,
           },
         },
       }),
@@ -796,12 +862,14 @@ export class BillingService {
             auditId,
             customerEmail: orderData.customerEmail,
             customerName: orderData.customerName,
+            providerOrderId: razorpayOrder.id,
+            providerPaymentId: razorpayPayment.id,
           },
         },
       }),
     ]);
 
-    // 6. Create fulfillment record
+    // 10. Create fulfillment record
     await this.createExpressFixFulfillment(
       systemGuestOrgId,
       websiteId,
@@ -809,8 +877,20 @@ export class BillingService {
       paymentId
     );
 
-    // 7. Update fulfillment status to PAID
-    await this.updateExpressFixFulfillment(paymentId, 'PAID');
+    // 11. Update fulfillment status to PAID (fulfillment pending)
+    await this.updateExpressFixFulfillment(paymentId, 'FULFILLMENT_PENDING');
+
+    // Log successful verification
+    console.log(JSON.stringify({
+      level: 'info',
+      service: 'billing',
+      event: 'express_fix_payment_verified',
+      orderId,
+      paymentId,
+      auditId,
+      websiteId,
+      organizationId: systemGuestOrgId,
+    }));
 
     return { payment, invoice, duplicate: false };
   }

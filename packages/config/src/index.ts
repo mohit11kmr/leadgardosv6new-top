@@ -25,9 +25,9 @@ export const config = z
     DEFAULT_CONVERSION_RATE: z.coerce.number().nonnegative().max(100).default(0),
     DEFAULT_AVERAGE_LEAD_VALUE: z.coerce.number().nonnegative().default(0),
     // Phase 5.1 Payment & Billing Configurations
-    PAYMENT_PROVIDER_MODE: z.enum(['MOCK', 'TEST', 'LIVE']).default('MOCK'),
-    RAZORPAY_KEY_ID: z.string().optional(),
-    RAZORPAY_KEY_SECRET: z.string().optional(),
+    PAYMENT_PROVIDER_MODE: z.enum(['TEST', 'LIVE']).default('TEST'),
+    RAZORPAY_KEY_ID: z.string().min(1),
+    RAZORPAY_KEY_SECRET: z.string().min(1),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
     // Monitoring Configurations
     MONITOR_CRAWL_CONCURRENCY: z.coerce.number().int().positive().max(10).default(3),
@@ -40,5 +40,7 @@ export const config = z
     // Guest Scan Configuration
     SYSTEM_GUEST_ORGANIZATION_ID: z.string().uuid().optional(),
     SYSTEM_GUEST_ORGANIZATION_NAME: z.string().default('LeadGuard Guest Scans'),
+    // Trust Proxy Configuration
+    TRUST_PROXY: z.coerce.boolean().default(false),
   })
   .parse(process.env);

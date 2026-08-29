@@ -8,50 +8,68 @@ import type {
   CreateSubscriptionResult,
   VerifyPaymentInput,
   VerifyWebhookInput,
+  RazorpayOrder,
+  RazorpayPayment,
 } from './types.js';
 
-export type PaymentProviderMode = 'MOCK' | 'TEST' | 'LIVE';
+export type PaymentProviderMode = 'TEST' | 'LIVE';
 
 export class RazorpayProvider implements PaymentProvider {
   public readonly mode: PaymentProviderMode;
-  private readonly keyId?: string;
-  private readonly keySecret?: string;
-  private readonly webhookSecret?: string;
+  private readonly keyId: string;
+  private readonly keySecret: string;
+  private readonly webhookSecret: string;
 
   constructor() {
-    this.mode = (process.env.PAYMENT_PROVIDER_MODE as PaymentProviderMode) || 'MOCK';
-    this.keyId = process.env.RAZORPAY_KEY_ID || (this.mode === 'MOCK' ? undefined : config.RAZORPAY_KEY_ID);
-    this.keySecret = process.env.RAZORPAY_KEY_SECRET || (this.mode === 'MOCK' ? undefined : config.RAZORPAY_KEY_SECRET);
-    this.webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || config.RAZORPAY_WEBHOOK_SECRET;
+    const mode = process.env.PAYMENT_PROVIDER_MODE as PaymentProviderMode || 'TEST';
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
-    // Fail immediately if configured for real integration (TEST or LIVE) without credentials
-    if (this.mode !== 'MOCK' && (!this.keyId || !this.keySecret)) {
+    if (!keyId || !keySecret) {
       throw new Error(
-        `[RazorpayProvider] Configuration error: RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required when PAYMENT_PROVIDER_MODE is '${this.mode}'`
+        `[RazorpayProvider] Configuration error: RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required`
       );
     }
+
+    if (mode === 'LIVE' && (!keyId.startsWith('rzp_live_'))) {
+      throw new Error(
+        `[RazorpayProvider] Configuration error: LIVE mode requires live keys (rzp_live_*)`
+      );
+    }
+
+    if (mode === 'TEST' && (!keyId.startsWith('rzp_test_'))) {
+      throw new Error(
+        `[RazorpayProvider] Configuration error: TEST mode requires test keys (rzp_test_*)`
+      );
+    }
+
+    this.mode = mode;
+    this.keyId = keyId;
+    this.keySecret = keySecret;
+    this.webhookSecret = webhookSecret || '';
+
+    // Safe startup logging
+    console.log(JSON.stringify({
+      level: 'info',
+      service: 'razorpay',
+      event: 'provider_initialized',
+      mode: this.mode,
+      keyId: this.keyId.substring(0, 12) + '***',
+      webhookSecretConfigured: !!this.webhookSecret,
+    }));
   }
 
   private getAuthHeader(): string {
-    if (!this.keyId || !this.keySecret) {
-      throw new Error('[RazorpayProvider] Missing API credentials for HTTP request');
-    }
     return `Basic ${Buffer.from(`${this.keyId}:${this.keySecret}`).toString('base64')}`;
   }
 
-  async createOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
-    if (this.mode === 'MOCK') {
-      const orderId = `order_mock_${randomBytes(12).toString('hex')}`;
-      return {
-        orderId,
-        amount: input.amountInPaise,
-        currency: input.currency,
-        keyId: this.keyId || 'rzp_mock_key',
-      };
-    }
+  private getBaseUrl(): string {
+    return 'https://api.razorpay.com/v1';
+  }
 
-    // Real Razorpay Orders API call for TEST / LIVE modes
-    const response = await fetch('https://api.razorpay.com/v1/orders', {
+  async createOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
+    const response = await fetch(`${this.getBaseUrl()}/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -76,22 +94,12 @@ export class RazorpayProvider implements PaymentProvider {
       orderId: data.id,
       amount: data.amount,
       currency: data.currency,
-      keyId: this.keyId!,
+      keyId: this.keyId,
     };
   }
 
   async createSubscription(input: CreateSubscriptionInput): Promise<CreateSubscriptionResult> {
-    if (this.mode === 'MOCK') {
-      const subscriptionId = `sub_mock_${randomBytes(12).toString('hex')}`;
-      return {
-        subscriptionId,
-        shortUrl: `https://rzp.io/i/${subscriptionId}`,
-        status: 'active',
-      };
-    }
-
-    // Real Razorpay Subscriptions API call for TEST / LIVE modes
-    const response = await fetch('https://api.razorpay.com/v1/subscriptions', {
+    const response = await fetch(`${this.getBaseUrl()}/subscriptions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -123,12 +131,7 @@ export class RazorpayProvider implements PaymentProvider {
     subscriptionId: string,
     cancelImmediately = false
   ): Promise<{ cancelled: boolean }> {
-    if (this.mode === 'MOCK') {
-      return { cancelled: true };
-    }
-
-    // Real Razorpay Subscription Cancellation API call for TEST / LIVE modes
-    const response = await fetch(`https://api.razorpay.com/v1/subscriptions/${subscriptionId}/cancel`, {
+    const response = await fetch(`${this.getBaseUrl()}/subscriptions/${subscriptionId}/cancel`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -149,13 +152,48 @@ export class RazorpayProvider implements PaymentProvider {
     return { cancelled: true };
   }
 
+  async fetchOrder(orderId: string): Promise<RazorpayOrder> {
+    const response = await fetch(`${this.getBaseUrl()}/orders/${orderId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: this.getAuthHeader(),
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        `[RazorpayProvider] Fetch order failed: ${data.error?.description || response.statusText}`
+      );
+    }
+
+    return data as RazorpayOrder;
+  }
+
+  async fetchPayment(paymentId: string): Promise<RazorpayPayment> {
+    const response = await fetch(`${this.getBaseUrl()}/payments/${paymentId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: this.getAuthHeader(),
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        `[RazorpayProvider] Fetch payment failed: ${data.error?.description || response.statusText}`
+      );
+    }
+
+    return data as RazorpayPayment;
+  }
+
   /**
    * Verifies Razorpay payment signature: HMAC-SHA256(order_id + "|" + payment_id, secret)
    */
   verifyPaymentSignature(input: VerifyPaymentInput): boolean {
-    const secret = this.keySecret || 'mock_secret_key';
     const payload = `${input.orderId}|${input.paymentId}`;
-    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    const expected = createHmac('sha256', this.keySecret).update(payload).digest('hex');
 
     try {
       const expectedBuffer = Buffer.from(expected, 'hex');
@@ -171,7 +209,7 @@ export class RazorpayProvider implements PaymentProvider {
    * Verifies Razorpay Webhook signature: HMAC-SHA256(rawBody, webhookSecret)
    */
   verifyWebhookSignature(input: VerifyWebhookInput): boolean {
-    const secret = input.webhookSecret || this.webhookSecret || 'mock_webhook_secret';
+    const secret = input.webhookSecret || this.webhookSecret;
     const expected = createHmac('sha256', secret).update(input.rawBody).digest('hex');
 
     try {
@@ -188,7 +226,7 @@ export class RazorpayProvider implements PaymentProvider {
    * Generates valid signature for mock/unit tests
    */
   generateTestPaymentSignature(orderId: string, paymentId: string, customSecret?: string): string {
-    const secret = customSecret || this.keySecret || 'mock_secret_key';
+    const secret = customSecret || this.keySecret;
     const payload = `${orderId}|${paymentId}`;
     return createHmac('sha256', secret).update(payload).digest('hex');
   }
@@ -197,7 +235,7 @@ export class RazorpayProvider implements PaymentProvider {
    * Generates valid webhook signature for mock/unit tests
    */
   generateTestWebhookSignature(rawBody: string, customSecret?: string): string {
-    const secret = customSecret || this.webhookSecret || 'mock_webhook_secret';
+    const secret = customSecret || this.webhookSecret;
     return createHmac('sha256', secret).update(rawBody).digest('hex');
   }
 }
