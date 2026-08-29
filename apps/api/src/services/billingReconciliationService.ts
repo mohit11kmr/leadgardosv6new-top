@@ -30,16 +30,16 @@ export class BillingReconciliationService {
     const discrepancies: ReconciliationDiscrepancy[] = [];
 
     for (const sub of subscriptions) {
-      if (razorpayProvider.mode === 'MOCK') {
-        // In MOCK mode, verify local referential integrity
-        if (!sub.providerSubscriptionId?.startsWith('sub_')) {
+      if (razorpayProvider.mode === 'TEST') {
+        // In TEST mode, verify local referential integrity
+        if (!sub.providerSubscriptionId?.startsWith('sub_test_') && !sub.providerSubscriptionId?.startsWith('sub_mock_')) {
           discrepancies.push({
             entityType: 'SUBSCRIPTION',
             entityId: sub.id,
             providerId: sub.providerSubscriptionId || '',
             field: 'providerSubscriptionId',
             localValue: sub.providerSubscriptionId,
-            providerValue: 'sub_mock_*',
+            providerValue: 'sub_test_*',
             severity: 'MEDIUM',
           });
         }

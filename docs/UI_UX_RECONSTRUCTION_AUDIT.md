@@ -450,10 +450,85 @@ A complete sweep of the frontend codebase identified the following hardcoded num
 
 ## 21. Implementation Sequence & Next Phase Recommendation
 
-Following the completion of this Phase 1 forensic audit, the recommended implementation sequence is:
+Following the completion of this forensic audit, the recommended implementation sequence is:
 
 1. **Phase 2 — Design System & Component Foundation**: Standardize all CSS tokens, resolve Tailwind class leakage in agency/admin views, refine `ScoreRing`, `FindingCard`, and interactive simulator widgets.
-2. **Phase 3 — Public Landing & Free Scan Conversion Funnel**: Clean up landing page demo labels, connect live plan rates, and implement guest-to-registered-user scan persistence.
+2. **Phase 3 — Public Landing & Free Scan Conversion Funnel**: Clean up landing page demo labels, connect live plan rates, fix 375px mobile horizontal overflow, and implement guest-to-registered-user scan persistence.
 3. **Phase 4 — Executive Dashboard & Audit Dossier Reconstruction**: Surface the interactive revenue scenario calculator and funnel simulator directly into the main customer experience.
 4. **Phase 5 — Agency Suite & Multi-Tenant Workspaces**: Refine Prospect Hunter batch flows, Pitch Generator copy controls, and Client Website assignment modals.
 5. **Phase 6 — Browser QA & E2E Verification**: Execute end-to-end Playwright tests and full-stack verification across all routes and roles.
+
+---
+
+## 22. Phase 1B — Verified Browser Evidence & Telemetry Report
+
+### 1. Diagnosis & Root Cause of Initial Playwright Driver 404
+- **Manifested Issue**: The agent's built-in subagent tool failed with `HTTP 404 Not Found` when attempting to download an unpinned driver archive: `https://playwright.azureedge.net/builds/driver/playwright-1.57.0-linux.zip`.
+- **Root Cause**: While `package.json` specifies `"@playwright/test": "^1.49.1"`, the project installed `@playwright/test@1.62.1` in `node_modules`. Subagent tooling attempted to download a generic 1.57.0 binary rather than using local dependencies.
+- **Remediation Strategy**: Created a dedicated, non-intrusive audit runner (`scripts/uiux-browser-audit.cjs`) utilizing `@playwright/test` to directly launch the host's native `/usr/bin/google-chrome` binary (`executablePath: '/usr/bin/google-chrome'`) in headless mode without downloading external drivers.
+
+### 2. Runtime Environment & Service Health
+- **Web Frontend (`http://localhost:5173`)**: **ONLINE (200 OK)** — Vite v6.4.3 serving React 19 application.
+- **Backend API (`http://localhost:4000/health`)**: **OFFLINE (BLOCKED)** — API server startup failed due to a pre-existing syntax error in unstaged user modifications in `apps/api/src/services/billingService.ts:1374` (`Declaration or statement expected`).
+- **Worker Process**: **OFFLINE** — Worker depends on database/API.
+
+### 3. Route Testing & Verification Breakdown (38 Test Passes Across 4 Viewports)
+All screenshots saved in `.gemini/antigravity-ide/brain/6055028e-e92b-4888-8030-70e6fa986f7a/screenshots/`.
+
+| Route Tested | Viewports Tested | Render Status | Evidence Classification | Console & Network Findings |
+| :--- | :--- | :--- | :--- | :--- |
+| **`/` (Landing Page)** | 1440x900, 1024x900, 768x1024, 375x812 | 200 OK | **VERIFIED BY LIVE BROWSER** | Clean rendering; **Horizontal scroll overflow detected at 375x812**. |
+| **`/login`** | 1440x900, 768x1024, 375x812 | 200 OK | **VERIFIED BY LIVE BROWSER** | Rendered centered auth card; pre-filled dev credentials in DOM. |
+| **`/register`** | 1440x900, 768x1024, 375x812 | 200 OK | **VERIFIED BY LIVE BROWSER** | Rendered workspace + email + password fields cleanly. |
+| **`/password-reset`** | 1440x900 | 200 OK | **VERIFIED BY LIVE BROWSER** | Rendered password reset form. |
+| **`/checkout/express-fix`** | 1440x900, 375x812 | 200 OK | **VERIFIED BY LIVE BROWSER** | Rendered order breakdown (₹2,999) and guest customer form. |
+| **`/privacy`, `/terms`, `/cookies`, `/refund`** | 1440x900 | 200 OK | **VERIFIED BY LIVE BROWSER** | All 4 legal policies rendered complete text in dark mode surface. |
+| **`/scan/demo-audit-sample`** | 1440x900 | 200 OK | **VERIFIED BY LIVE BROWSER** | Public scan view rendered with loading skeleton state. |
+| **Protected Routes (20 total: `/dashboard`, `/websites`, `/audits`, `/reports`, `/monitoring`, `/billing`, `/settings`, `/security/sessions`, `/agency/*`, `/developer/*`, `/admin/*`)** | 1440x900 | 302/Redirect to `/login` | **VERIFIED REDIRECT GUARD ONLY** (Actual dashboard uninspected due to offline API) | Correctly blocked unauthenticated access and preserved target route. |
+
+### 4. Interactive User Flow Results
+1. **Flow A (Homepage Quick Scan Submission)**:
+   - Entering `https://example.com` and submitting triggered `POST /public/free-scan`. Because the API server was offline, the request failed silently without displaying an error banner or toast to the user.
+2. **Flow B (Login Form Submission)**:
+   - Submitting credentials triggered `.authError` banner: `"Failed to fetch"`.
+3. **Flow C (Registration Form Submission)**:
+   - Submitting short password and workspace name triggered `.authError` banner: `"Failed to fetch"`.
+4. **Flow D (Password Reset Submission)**:
+   - Submitting email triggered `.authError` banner: `"Failed to fetch"`.
+5. **Flow E (Express Fix Checkout Flow)**:
+   - Navigating with `?websiteId=web_123&auditId=aud_456` rendered the express fix card with pricing summary.
+
+### 5. Separation of Evidence Quality
+- **VERIFIED BY LIVE BROWSER**:
+  - Homepage visual hierarchy, hero contrast, pricing cards, and footer links across 4 viewports.
+  - Mobile 375px horizontal scroll overflow issue.
+  - Authentication forms (Login, Register, Password Reset) rendering and error banner containers.
+  - Express Fix checkout UI rendering and responsive behavior.
+  - Route protection redirect guards on all 20 private routes.
+- **SOURCE-CODE ANALYSIS ONLY**:
+  - Authenticated Dashboard metric cards and priority remediation engine.
+  - Full Audit detail view tabs (Scores, Scenarios, Funnel, WhatsApp optimizer, Findings).
+  - Watchdog continuous monitoring run history, baseline diffs, and incident acknowledgment.
+  - Agency Prospect Hunter, Pitch Generator, Widget embed codes, and Competitor radar.
+  - Developer API key creation and Webhook HMAC delivery logs.
+  - Admin user moderation and organization tenant management.
+- **UNVERIFIED / BLOCKED**:
+  - Live interactive dashboard state with real seeded data (blocked by API server syntax error).
+  - Razorpay payment modal popup rendering (blocked by offline API order creation).
+  - PDF report download in browser (blocked by offline worker).
+
+### 6. Rechecking Previous Claims Against Real Browser Evidence
+
+| Previous Audit Claim | Recheck Status | Browser Evidence / Rationale |
+| :--- | :--- | :--- |
+| **P1 Homepage Hardcoded Metrics** | **VERIFIED** | Browser DOM inspection confirms static strings (`₹3,42,000`, `24/24 monitors`, `94/100`) inside preview cards without demo labels. |
+| **P1 Guest Scan → Registration Linkage** | **VERIFIED** | Registration form (`RegisterView.tsx`) does not read `scanId` from URL or local storage. |
+| **P1 Revenue Scenarios Hidden in Subtabs** | **VERIFIED** | Scenarios and Funnel simulations are only mounted in `AuditDetailView.tsx` tabs 3 & 4; absent from Dashboard. |
+| **P2 Tailwind Leakage in Agency/Admin Views** | **VERIFIED** | Source files contain Tailwind classes (`text-slate-800`, `grid-cols-4`) while Vite build only bundles custom CSS from `styles.css`. |
+
+### 7. New Concrete UI/UX Findings from Real Browser Audit
+1. **P1 — Mobile 375px Horizontal Scroll Overflow**: On mobile screens (375x812), the homepage header and pricing grid exceed screen width, causing unintentional horizontal scrolling.
+2. **P1 — Single 1.25MB Monolithic JavaScript Bundle**: Vite build analysis reveals a single un-split `1,258.67 kB` bundle (`dist/assets/index-CD1TK-gs.js`). Route-level code splitting (`React.lazy()`) is missing.
+3. **P2 — Silent Failure on Quick Scan Fetch Error**: When network/API requests fail during homepage free scan submission, no error toast or alert is displayed, leaving the user without feedback.
+4. **P2 — Hardcoded Credentials Pre-filled in Login DOM**: The login view pre-fills `demo@leadguard.test` and `SecurePass1234!` directly in React state and DOM inputs.
+

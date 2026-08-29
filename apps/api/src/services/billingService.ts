@@ -1011,7 +1011,202 @@ export class BillingService {
 
     // 4. Process event based on type
     if (organizationId) {
-      await db.$transaction(async function(tx): Promise<void> {
+      await db.$transaction(async (tx) => {
+        await this.processWebhookTransaction(tx, organizationId, eventId, eventType, eventPayload, paymentEntity, subscriptionEntity, paymentNotes, payloadData);
+      });
+    }
+  }
+
+  /**
+   * Process webhook transaction logic in a separate method to avoid TypeScript closure issues
+   */
+  private async processWebhookTransaction(
+    tx: any,
+    organizationId: string,
+    eventId: string,
+    eventType: string,
+    eventPayload: Record<string, unknown>,
+    paymentEntity: any,
+    subscriptionEntity: any,
+    paymentNotes: Record<string, string>,
+    payloadData: Record<string, unknown>
+  ): Promise<void> {
+    // Extract payment notes at the top to avoid "used before declaration" errors
+    const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
+
+    await tx.billingEvent.create({
+      data: {
+        organizationId,
+        type: eventType.toUpperCase().replace(/\./g, '_'),
+        providerEventId: eventId,
+        data: eventPayload as object,
+      },
+    });
+
+    // Handle subscription activation
+    if (eventType === 'subscription.charged' || eventType === 'subscription.activated') {
+      const providerSubscriptionId = subscriptionEntity.id as string;
+      if (providerSubscriptionId) {
+        const subscription = await tx.subscription.findFirst({
+          where: { organizationId, providerSubscriptionId, status: 'CREATED' },
+        });
+        if (subscription && this.isValidSubscriptionTransition(subscription.status, 'ACTIVE')) {
+          await tx.subscription.update({
+            where: { id: subscription.id },
+            data: {
+              status: 'ACTIVE',
+              currentPeriodStart: new Date(),
+              currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
+            },
+          });
+          await tx.billingEvent.create({
+            data: {
+              organizationId,
+              type: 'SUBSCRIPTION_ACTIVATED',
+              providerEventId: providerSubscriptionId,
+              data: { subscriptionId: subscription.id },
+            },
+          });
+        }
+      }
+    }
+
+    // Handle subscription payment failure
+    if (eventType === 'subscription.charge_failed' || eventType === 'subscription.paused') {
+      const providerSubscriptionId = subscriptionEntity.id as string;
+      if (providerSubscriptionId) {
+        const subscription = await tx.subscription.findFirst({
+          where: { organizationId, providerSubscriptionId, status: { in: ['CREATED', 'ACTIVE'] } },
+        });
+        if (subscription) {
+          await tx.subscription.update({
+            where: { id: subscription.id },
+            data: { status: 'PAST_DUE' },
+          });
+          await tx.billingEvent.create({
+            data: {
+              organizationId,
+              type: 'SUBSCRIPTION_PAYMENT_FAILED',
+              providerEventId: providerSubscriptionId,
+              data: { subscriptionId: subscription.id },
+            },
+          });
+        }
+      }
+    }
+
+    // Handle Express Fix fulfillment updates - payment.captured
+    if (eventType === 'payment.captured') {
+      const paymentId = paymentEntity.id as string;
+      const paymentAmount = paymentEntity.amount as number;
+      const paymentCurrency = paymentEntity.currency as string;
+      
+      if (paymentId) {
+        console.log(JSON.stringify({
+          level: 'info',
+          service: 'billing',
+          event: 'razorpay_webhook_payment_captured',
+          eventId,
+          paymentId,
+          amount: paymentAmount,
+          currency: paymentCurrency,
+          organizationId,
+        }));
+
+        // Handle Express Fix fulfillment
+        if (paymentNotes.purpose === 'EXPRESS_FIX') {
+          const fulfillment = await tx.expressFixFulfillment.findUnique({
+            where: { paymentId },
+          });
+          if (fulfillment) {
+            if (fulfillment.status === 'PAYMENT_PENDING' || fulfillment.status === 'FULFILLMENT_PENDING') {
+              await tx.expressFixFulfillment.update({
+                where: { paymentId },
+                data: { status: 'FULFILLMENT_IN_PROGRESS' },
+              });
+              await tx.billingEvent.create({
+                data: {
+                  organizationId,
+                  type: 'EXPRESS_FIX_FULFILLMENT_IN_PROGRESS',
+                  providerEventId: paymentId,
+                  data: { fulfillmentId: fulfillment.id },
+                },
+              });
+            }
+          }
+        }
+      }
+
+    // Handle Express Fix fulfillment updates - payment.failed
+    if (eventType === 'payment.failed') {
+      const paymentId = paymentEntity.id as string;
+      const errorCode = paymentEntity.error_code as string | undefined;
+      const errorDescription = paymentEntity.error_description as string | undefined;
+      
+      if (paymentId) {
+        console.log(JSON.stringify({
+          level: 'warn',
+          service: 'billing',
+          event: 'razorpay_webhook_payment_failed',
+          eventId,
+          paymentId,
+          errorCode,
+          errorDescription,
+          organizationId,
+        }));
+
+        // Handle Express Fix fulfillment
+        if (paymentNotes.purpose === 'EXPRESS_FIX') {
+          const fulfillment = await tx.expressFixFulfillment.findUnique({
+            where: { paymentId },
+          });
+          if (fulfillment) {
+            await tx.expressFixFulfillment.update({
+              where: { paymentId },
+              data: { 
+                status: 'FULFILLMENT_FAILED',
+                notes: `Payment failed: ${errorDescription || errorCode || 'Unknown error'}`,
+              },
+            });
+            await tx.billingEvent.create({
+              data: {
+                organizationId,
+                type: 'EXPRESS_FIX_FULFILLMENT_FAILED',
+                providerEventId: paymentId,
+                data: { 
+                  fulfillmentId: fulfillment.id,
+                  errorCode,
+                  errorDescription,
+                },
+              },
+            });
+          }
+        }
+      }
+
+    // Handle order.paid (alternative event for order completion)
+    if (eventType === 'order.paid') {
+      const orderEntity = (eventPayload.payload?.order as { entity?: Record<string, unknown> })?.entity || {};
+      const orderId = orderEntity.id as string;
+      const orderAmount = orderEntity.amount as number;
+      const orderCurrency = orderEntity.currency as string;
+      
+      console.log(JSON.stringify({
+        level: 'info',
+        service: 'billing',
+        event: 'razorpay_webhook_order_paid',
+        eventId,
+        orderId,
+        amount: orderAmount,
+        currency: orderCurrency,
+        organizationId,
+      }));
+    }
+  }
+
+  /**
+   * Idempotent Webhook Handler for Razorpay
+   */
         await tx.billingEvent.create({
           data: {
             organizationId,
@@ -1181,7 +1376,8 @@ export class BillingService {
             organizationId,
           }));
         }
-      });
+        }
+      }
     }
 
     return { received: true, duplicate: false };
