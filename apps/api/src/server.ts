@@ -13,8 +13,8 @@ import { apiLimiter } from './middleware/rateLimiters.js';
 export const app = express();
 const redis = new Redis(config.REDIS_URL);
 
-// Trust reverse proxies in production
-app.set('trust proxy', 1);
+// Trust reverse proxies based on configuration
+app.set('trust proxy', config.TRUST_PROXY);
 
 // Structured logging with sensitive data redaction (Requirement 28)
 app.use((request, response, next) => {

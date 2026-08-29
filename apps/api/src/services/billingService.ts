@@ -966,6 +966,9 @@ export class BillingService {
     });
 
     if (!isValid) {
+      await recordSecurityEvent('RAZORPAY_WEBHOOK_INVALID_SIGNATURE', null, null, {
+        eventType: (eventPayload.event as string) || 'unknown',
+      });
       throw new Error('Invalid webhook signature');
     }
 
@@ -977,6 +980,13 @@ export class BillingService {
       where: { providerEventId: eventId },
     });
     if (existingEvent) {
+      console.log(JSON.stringify({
+        level: 'info',
+        service: 'billing',
+        event: 'razorpay_webhook_duplicate',
+        eventId,
+        eventType,
+      }));
       return { received: true, duplicate: true };
     }
 
@@ -989,9 +999,19 @@ export class BillingService {
     const notes = { ...paymentNotes, ...subscriptionNotes };
     const organizationId = notes.organizationId || null;
 
+    // Log webhook received
+    console.log(JSON.stringify({
+      level: 'info',
+      service: 'billing',
+      event: 'razorpay_webhook_received',
+      eventId,
+      eventType,
+      organizationId,
+    }));
+
     // 4. Process event based on type
     if (organizationId) {
-      await db.$transaction(async (tx) => {
+      await db.$transaction(async function(tx): Promise<void> {
         await tx.billingEvent.create({
           data: {
             organizationId,
@@ -1053,29 +1073,113 @@ export class BillingService {
           }
         }
 
-        // Handle Express Fix fulfillment updates
+        // Handle Express Fix fulfillment updates - payment.captured
         const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
-        if (eventType === 'payment.captured' && paymentNotes.purpose === 'EXPRESS_FIX') {
+        if (eventType === 'payment.captured') {
           const paymentId = paymentEntity.id as string;
+          const paymentAmount = paymentEntity.amount as number;
+          const paymentCurrency = paymentEntity.currency as string;
+          
           if (paymentId) {
-            const fulfillment = await tx.expressFixFulfillment.findUnique({
-              where: { paymentId },
-            });
-            if (fulfillment && fulfillment.status === 'PAYMENT_PENDING') {
-              await tx.expressFixFulfillment.update({
+            console.log(JSON.stringify({
+              level: 'info',
+              service: 'billing',
+              event: 'razorpay_webhook_payment_captured',
+              eventId,
+              paymentId,
+              amount: paymentAmount,
+              currency: paymentCurrency,
+              organizationId,
+            }));
+
+            // Handle Express Fix fulfillment
+            if (paymentNotes.purpose === 'EXPRESS_FIX') {
+              const fulfillment = await tx.expressFixFulfillment.findUnique({
                 where: { paymentId },
-                data: { status: 'FULFILLMENT_PENDING' },
               });
-              await tx.billingEvent.create({
-                data: {
-                  organizationId,
-                  type: 'EXPRESS_FIX_FULFILLMENT_PENDING',
-                  providerEventId: paymentId,
-                  data: { fulfillmentId: fulfillment.id },
-                },
-              });
+              if (fulfillment) {
+                if (fulfillment.status === 'PAYMENT_PENDING' || fulfillment.status === 'FULFILLMENT_PENDING') {
+                  await tx.expressFixFulfillment.update({
+                    where: { paymentId },
+                    data: { status: 'FULFILLMENT_IN_PROGRESS' },
+                  });
+                  await tx.billingEvent.create({
+                    data: {
+                      organizationId,
+                      type: 'EXPRESS_FIX_FULFILLMENT_IN_PROGRESS',
+                      providerEventId: paymentId,
+                      data: { fulfillmentId: fulfillment.id },
+                    },
+                  });
+                }
+              }
             }
           }
+
+        // Handle Express Fix fulfillment updates - payment.failed
+        if (eventType === 'payment.failed') {
+          const paymentId = paymentEntity.id as string;
+          const errorCode = paymentEntity.error_code as string | undefined;
+          const errorDescription = paymentEntity.error_description as string | undefined;
+          
+          if (paymentId) {
+            console.log(JSON.stringify({
+              level: 'warn',
+              service: 'billing',
+              event: 'razorpay_webhook_payment_failed',
+              eventId,
+              paymentId,
+              errorCode,
+              errorDescription,
+              organizationId,
+            }));
+
+            // Handle Express Fix fulfillment
+            if (paymentNotes.purpose === 'EXPRESS_FIX') {
+              const fulfillment = await tx.expressFixFulfillment.findUnique({
+                where: { paymentId },
+              });
+              if (fulfillment) {
+                await tx.expressFixFulfillment.update({
+                  where: { paymentId },
+                  data: { 
+                    status: 'FULFILLMENT_FAILED',
+                    notes: `Payment failed: ${errorDescription || errorCode || 'Unknown error'}`,
+                  },
+                });
+                await tx.billingEvent.create({
+                  data: {
+                    organizationId,
+                    type: 'EXPRESS_FIX_FULFILLMENT_FAILED',
+                    providerEventId: paymentId,
+                    data: { 
+                      fulfillmentId: fulfillment.id,
+                      errorCode,
+                      errorDescription,
+                    },
+                  },
+                });
+              }
+            }
+          }
+
+        // Handle order.paid (alternative event for order completion)
+        if (eventType === 'order.paid') {
+          const orderEntity = (payloadData.order as { entity?: Record<string, unknown> })?.entity || {};
+          const orderId = orderEntity.id as string;
+          const orderAmount = orderEntity.amount as number;
+          const orderCurrency = orderEntity.currency as string;
+          
+          console.log(JSON.stringify({
+            level: 'info',
+            service: 'billing',
+            event: 'razorpay_webhook_order_paid',
+            eventId,
+            orderId,
+            amount: orderAmount,
+            currency: orderCurrency,
+            organizationId,
+          }));
         }
       });
     }

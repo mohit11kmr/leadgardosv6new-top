@@ -5,6 +5,17 @@ import { config } from '@leadguard/config';
 export const redisClient = new Redis(config.REDIS_URL);
 const isTest = process.env.NODE_ENV === 'test';
 
+function getClientIp(req: Request): string {
+  // Only trust x-forwarded-for if TRUST_PROXY is enabled
+  if (config.TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'] as string;
+    if (forwarded) {
+      return forwarded.split(',')[0]?.trim() || req.socket.remoteAddress || '127.0.0.1';
+    }
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
+}
+
 export function createRedisRateLimiter(options: {
   keyPrefix: string;
   windowMs: number;
@@ -17,10 +28,7 @@ export function createRedisRateLimiter(options: {
 
   const keyGen =
     options.keyGenerator ||
-    ((req: Request) =>
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.socket.remoteAddress ||
-      '127.0.0.1');
+    ((req: Request) => getClientIp(req));
 
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
