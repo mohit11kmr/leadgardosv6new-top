@@ -40,12 +40,14 @@ enum FindingScope {
 }
 
 enum SubscriptionStatus {
+  CREATED
   TRIALING
   ACTIVE
   PAST_DUE
   PAUSED
   CANCELLED
   EXPIRED
+  FAILED
 }
 
 enum PaymentStatus {
@@ -62,6 +64,16 @@ enum PaymentPurpose {
   EXPRESS_FIX
   WATCHDOG
   PLAN_UPGRADE
+}
+
+enum ExpressFixStatus {
+  ORDER_CREATED
+  PAYMENT_PENDING
+  PAID
+  FULFILLMENT_PENDING
+  FULFILLMENT_IN_PROGRESS
+  FULFILLED
+  FULFILLMENT_FAILED
 }
 
 enum InvoiceStatus {
@@ -238,6 +250,7 @@ model Organization {
   competitorComparisons CompetitorComparison[]
   pitchGenerations      PitchGeneration[]
   notificationPreferences NotificationPreference[]
+  expressFixFulfillments ExpressFixFulfillment[]
 }
 
 model OrganizationMember {
@@ -270,6 +283,7 @@ model Website {
   settings          WebsiteSettings?
   audits            Audit[]
   monitoringConfig  MonitoringConfig?
+  expressFixFulfillments ExpressFixFulfillment[]
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
@@ -322,6 +336,7 @@ model Audit {
   score             AuditScore?
   reports           Report[]
   prospects         Prospect[]
+  expressFixFulfillments ExpressFixFulfillment[]
 
   @@index([organizationId, createdAt])
   @@index([websiteId, status])
@@ -625,6 +640,7 @@ model Payment {
   organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   subscription      Subscription?  @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   invoices          Invoice[]
+  expressFixFulfillment ExpressFixFulfillment?
 
   @@index([organizationId, createdAt])
 }
@@ -646,6 +662,27 @@ model Invoice {
   payment        Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])
+}
+
+model ExpressFixFulfillment {
+  id             String            @id @default(uuid())
+  organizationId String
+  websiteId      String
+  auditId        String?
+  paymentId      String            @unique
+  status         ExpressFixStatus  @default(ORDER_CREATED)
+  notes          String?
+  assignedTo     String?
+  completedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website        Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  audit          Audit?            @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  payment        Payment           @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([paymentId])
 }
 
 model BillingEvent {

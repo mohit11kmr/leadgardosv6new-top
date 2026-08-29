@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   getBillingOverview,
   getPlans,
   getEntitlements,
   createSubscriptionCheckout,
   cancelSubscription,
-  createExpressFixCheckout,
-  verifyExpressFixPayment,
   type BillingOverview,
   type Plan,
   type EntitlementsOverview,
@@ -15,13 +14,12 @@ import {
 import { Card } from '../../components/ui/Card.js';
 import { Badge } from '../../components/ui/Badge.js';
 import { Button } from '../../components/ui/Button.js';
-import { Modal } from '../../components/ui/Modal.js';
 import { Skeleton, ErrorState } from '../../components/ui/States.js';
 
 export function BillingView() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [checkoutStatus, setCheckoutStatus] = useState<string | null>(null);
-  const [expressFixModal, setExpressFixModal] = useState(false);
 
   const { data: billing, isLoading: loadingBilling, error: billingError } = useQuery<BillingOverview>({
     queryKey: ['billing-overview'],
@@ -62,23 +60,9 @@ export function BillingView() {
     },
   });
 
-  const expressFixMutation = useMutation({
-    mutationFn: async () => {
-      const order = await createExpressFixCheckout('00000000-0000-0000-0000-000000000000');
-      const res = await verifyExpressFixPayment({
-        orderId: order.orderId,
-        paymentId: `pay_test_${Date.now()}`,
-        signature: 'mock_signature_for_preview',
-        websiteId: '00000000-0000-0000-0000-000000000000',
-      });
-      return res;
-    },
-    onSuccess: () => {
-      setExpressFixModal(false);
-      setCheckoutStatus('Express Fix diagnostic remediation order placed and verified.');
-      queryClient.invalidateQueries({ queryKey: ['billing-overview'] });
-    },
-  });
+  const handleExpressFix = (websiteId: string, auditId?: string) => {
+    navigate(`/checkout/express-fix?websiteId=${websiteId}${auditId ? `&auditId=${auditId}` : ''}`);
+  };
 
   if (loadingBilling) {
     return (
@@ -274,7 +258,7 @@ export function BillingView() {
           <div className="mt3">
             <Button
               variant="primary"
-              onClick={() => setExpressFixModal(true)}
+              onClick={() => handleExpressFix('00000000-0000-0000-0000-000000000000')}
             >
               Order Express Fix
             </Button>
@@ -338,33 +322,6 @@ export function BillingView() {
           </table>
         )}
       </Card>
-
-      {/* Express Fix Modal */}
-      {expressFixModal && (
-        <Modal isOpen={expressFixModal} title="Deploy Express Fix" onClose={() => setExpressFixModal(false)}>
-          <p className="mb3">
-            The Express Fix service provides immediate engineering analysis and patch recommendations for all critical and high severity findings detected on your site.
-          </p>
-          <div className="pricingSummary mb4">
-            <div className="cardHeaderFlex">
-              <span>Total Due:</span>
-              <strong>₹2,999 (GST Inclusive)</strong>
-            </div>
-          </div>
-          <div className="modalActions">
-            <Button variant="ghost" onClick={() => setExpressFixModal(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              isLoading={expressFixMutation.isPending}
-              onClick={() => expressFixMutation.mutate()}
-            >
-              Confirm & Pay ₹2,999
-            </Button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }

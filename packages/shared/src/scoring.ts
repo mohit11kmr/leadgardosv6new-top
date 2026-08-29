@@ -420,7 +420,7 @@ export function explainScores(findings: Finding[], version = 'v3'): ScoreExplana
   const seoExp = buildPillarExplanation('SEO');
   const secExp = buildPillarExplanation('SECURITY');
 
-  const overall = Math.round(leadExp.score * 0.35 + advExp.score * 0.15 + seoExp.score * 0.25 + secExp.score * 0.25);
+  const overall = Math.round(leadExp.score * 0.35 + advExp.score * 0.25 + seoExp.score * 0.20 + secExp.score * 0.20);
 
   return {
     version,
@@ -446,7 +446,7 @@ export function calculateScores(findings: Finding[], version = 'v3'): ScoreBreak
     base.advertising = Math.max(0, Math.min(100, base.advertising));
     base.seo = Math.max(0, Math.min(100, base.seo));
     base.security = Math.max(0, Math.min(100, base.security));
-    base.overall = Math.round(base.lead * 0.35 + base.advertising * 0.15 + base.seo * 0.25 + base.security * 0.25);
+    base.overall = Math.round(base.lead * 0.35 + base.advertising * 0.25 + base.seo * 0.20 + base.security * 0.20);
     return base;
   }
 

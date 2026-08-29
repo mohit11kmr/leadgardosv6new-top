@@ -15,6 +15,7 @@ import { AuditDetailView } from '../features/audits/AuditDetailView.js';
 import { MonitoringView } from '../features/monitoring/MonitoringView.js';
 import { MonitorDetailView } from '../features/monitoring/MonitorDetailView.js';
 import { BillingView } from '../features/billing/BillingView.js';
+import { ExpressFixCheckoutView } from '../features/billing/ExpressFixCheckoutView.js';
 import { AgencyDashboardView } from '../features/agency/AgencyDashboardView.js';
 import { ClientListView, ClientDetailView } from '../features/agency/ClientViews.js';
 import { ProspectCampaignsView, ProspectDetailView } from '../features/agency/ProspectViews.js';
@@ -42,6 +43,7 @@ import {
   RefundPolicyView,
 } from '../features/legal/LegalViews.js';
 import { LandingPageView } from '../features/landing/LandingPageView.js';
+import { ScanResultView } from '../features/scan/ScanResultView.js';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated } = useAuth();
@@ -88,6 +90,7 @@ export function App() {
 
         {/* Public Share Links (Unauthenticated) */}
         <Route path="/public/reports/:token" element={<PublicReportView />} />
+        <Route path="/scan/:scanId" element={<ScanResultView />} />
 
         <Route
           path="/dashboard"
@@ -321,6 +324,7 @@ export function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/checkout/express-fix" element={<ExpressFixCheckoutView />} />
         <Route
           path="/security/sessions"
           element={

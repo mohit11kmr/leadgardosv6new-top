@@ -6,6 +6,7 @@ import {
   runSecurityHeadersScanner,
   runSeoScanner,
   runTelephoneScanner,
+  runTrackingScanner,
   runWhatsAppScanner,
 } from './scanners/index.js';
 
@@ -132,6 +133,17 @@ export const PAGE_SCANNERS: ScannerExecutableDefinition[] = [
     version: 'v3',
     enabled: true,
     run: (page: PageRecord, ctx?: ScannerContext) => runMixedContentScanner(page, ctx),
+  },
+  {
+    internalKey: 'TRACKING',
+    featureId: 'LG-006',
+    name: 'Tracking & Analytics Scanner',
+    category: 'ADVERTISING',
+    scope: 'PAGE',
+    severityPolicy: 'LOW',
+    version: 'v3',
+    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runTrackingScanner(page, ctx),
   },
 ];
 

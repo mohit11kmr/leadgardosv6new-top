@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { apiClient } from '../../api/client.js';
 import {
   IconDashboard,
   IconWebsites,
@@ -8,16 +9,46 @@ import {
   IconAgency,
   IconDeveloper,
   IconShield,
+  IconSearch,
+  IconAlertCircle,
+  IconCheckCircle,
 } from '../../components/ui/Icons.js';
 
 export function LandingPageView() {
   const [testUrl, setTestUrl] = useState('');
+  const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
 
-  const handleQuickAudit = (e: React.FormEvent) => {
+  const handleQuickAudit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!testUrl.trim()) return;
-    navigate(`/register?url=${encodeURIComponent(testUrl.trim())}`);
+
+    setSubmitState('submitting');
+    setErrorMessage('');
+
+    try {
+      const result = await apiClient<{ success: boolean; data: { scanId: string; status: string } }>('/public/free-scan', {
+        method: 'POST',
+        body: JSON.stringify({ url: testUrl.trim() }),
+      });
+
+      if (result.success && result.data) {
+        navigate(`/scan/${result.data.scanId}`);
+      } else {
+        setSubmitState('error');
+        setErrorMessage('Failed to start scan. Please try again.');
+      }
+    } catch (err: any) {
+      setSubmitState('error');
+      if (err.response?.status === 429) {
+        setErrorMessage('Too many requests. Please wait a moment before trying again.');
+      } else if (err.response?.status === 400) {
+        setErrorMessage(err.response.data?.error?.message || 'Invalid URL. Please enter a valid website URL.');
+      } else {
+        setErrorMessage('Unable to start scan. Please check the URL and try again.');
+      }
+    }
   };
 
   return (
@@ -119,13 +150,13 @@ export function LandingPageView() {
           margin: '0 auto 24px',
           color: '#ffffff',
         }}>
-          Detect Lead Leakage. <br />
+          Find the lead leaks<br />
           <span style={{
             background: 'linear-gradient(135deg, #38bdf8, #818cf8)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
           }}>
-            Protect Revenue. Automate Audits.
+            costing your business customers.
           </span>
         </h1>
 
@@ -136,7 +167,7 @@ export function LandingPageView() {
           margin: '0 auto 40px',
           lineHeight: '1.6',
         }}>
-          The all-in-one diagnostic intelligence platform for revenue leaders and agencies. Continuously monitor tracking tag health, broken lead forms, click-to-call links, and technical SEO regressions.
+          Scan your website for broken WhatsApp, call, form and conversion paths — free.
         </p>
 
         {/* Quick URL Scanner Bar */}
@@ -157,6 +188,7 @@ export function LandingPageView() {
             value={testUrl}
             onChange={(e) => setTestUrl(e.target.value)}
             required
+            disabled={submitState === 'submitting'}
             style={{
               flex: 1,
               background: 'transparent',
@@ -165,26 +197,50 @@ export function LandingPageView() {
               color: '#fff',
               fontSize: '15px',
               outline: 'none',
+              opacity: submitState === 'submitting' ? 0.6 : 1,
             }}
           />
           <button
             type="submit"
+            disabled={submitState === 'submitting'}
             style={{
-              background: 'linear-gradient(135deg, #2563eb, #38bdf8)',
+              background: submitState === 'submitting' ? '#334155' : 'linear-gradient(135deg, #2563eb, #38bdf8)',
               color: '#fff',
               border: 'none',
               padding: '12px 24px',
               borderRadius: '8px',
               fontSize: '15px',
               fontWeight: '700',
-              cursor: 'pointer',
+              cursor: submitState === 'submitting' ? 'not-allowed' : 'pointer',
               whiteSpace: 'nowrap',
               transition: 'opacity 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
             }}
           >
-            Scan Free Now
+            {submitState === 'submitting' && (
+              <svg style={{ width: '18px', height: '18px', animation: 'spin 1s linear infinite' }} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
+              </svg>
+            )}
+            {submitState === 'submitting' ? 'Analyzing website…' : 'Scan My Website Free'}
+            <style dangerouslySetInnerHTML={{ __html: '@keyframes spin { to { transform: rotate(360deg); } }' }} />
           </button>
         </form>
+
+        {submitState === 'error' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '12px', padding: '12px 16px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '14px' }}>
+            <IconAlertCircle size={16} />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {submitState === 'idle' && (
+          <p style={{ textAlign: 'center', fontSize: '13px', color: '#64748b', marginTop: '12px' }}>
+            No registration required • Results in ~30 seconds • SSRF-hardened scanning
+          </p>
+        )}
 
         {/* Trust Badges */}
         <div style={{ display: 'flex', justifyContent: 'center', gap: '32px', color: '#64748b', fontSize: '13px', fontWeight: '500' }}>

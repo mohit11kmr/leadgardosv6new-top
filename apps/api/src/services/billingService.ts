@@ -339,11 +339,23 @@ export class BillingService {
       }),
     ]);
 
+    // Create fulfillment record
+    await this.createExpressFixFulfillment(
+      organizationId,
+      input.websiteId,
+      input.auditId,
+      input.paymentId
+    );
+
+    // Update fulfillment status to PAID
+    await this.updateExpressFixFulfillment(input.paymentId, 'PAID');
+
     return { payment, invoice, duplicate: false };
   }
 
   /**
    * Plan Subscription Checkout (Pro / Agency / Enterprise / Watchdog)
+   * Creates subscription in CREATED status - will be activated via webhook after provider confirmation
    */
   async createSubscriptionCheckout(
     organizationId: string,
@@ -364,12 +376,12 @@ export class BillingService {
     const currentPeriodStart = new Date();
     const currentPeriodEnd = new Date(Date.now() + 30 * 86400000);
 
-    // Create subscription record
+    // Create subscription record in CREATED status - will be activated via webhook
     const subscription = await db.subscription.create({
       data: {
         organizationId,
         planId: plan.id,
-        status: 'ACTIVE',
+        status: 'CREATED',
         provider: 'RAZORPAY',
         providerSubscriptionId: subResult.subscriptionId,
         currentPeriodStart,
@@ -423,6 +435,154 @@ export class BillingService {
   }
 
   /**
+   * Activate subscription after provider confirmation (called from webhook)
+   */
+  async activateSubscription(organizationId: string, providerSubscriptionId: string) {
+    const subscription = await db.subscription.findFirst({
+      where: { organizationId, providerSubscriptionId, status: 'CREATED' },
+    });
+
+    if (!subscription) {
+      return null;
+    }
+
+    if (!this.isValidSubscriptionTransition(subscription.status, 'ACTIVE')) {
+      throw new Error(`Invalid subscription transition from ${subscription.status} to ACTIVE`);
+    }
+
+    const updated = await db.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        status: 'ACTIVE',
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
+      },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId,
+        type: 'SUBSCRIPTION_ACTIVATED',
+        providerEventId: providerSubscriptionId,
+        data: { subscriptionId: subscription.id },
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Handle subscription payment failure
+   */
+  async failSubscription(organizationId: string, providerSubscriptionId: string, reason?: string) {
+    const subscription = await db.subscription.findFirst({
+      where: { organizationId, providerSubscriptionId, status: 'CREATED' },
+    });
+
+    if (!subscription) {
+      return null;
+    }
+
+    const updated = await db.subscription.update({
+      where: { id: subscription.id },
+      data: { status: 'FAILED' },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId,
+        type: 'SUBSCRIPTION_FAILED',
+        providerEventId: providerSubscriptionId,
+        data: { subscriptionId: subscription.id, reason },
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Create Express Fix fulfillment record after successful payment
+   */
+  async createExpressFixFulfillment(
+    organizationId: string,
+    websiteId: string,
+    auditId: string | undefined,
+    paymentId: string
+  ) {
+    const fulfillment = await db.expressFixFulfillment.create({
+      data: {
+        organizationId,
+        websiteId,
+        auditId,
+        paymentId,
+        status: 'PAYMENT_PENDING',
+      },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId,
+        type: 'EXPRESS_FIX_FULFILLMENT_CREATED',
+        providerEventId: paymentId,
+        data: { fulfillmentId: fulfillment.id, websiteId, auditId },
+      },
+    });
+
+    return fulfillment;
+  }
+
+  /**
+   * Update Express Fix fulfillment status
+   */
+  async updateExpressFixFulfillment(
+    paymentId: string,
+    status: 'PAYMENT_PENDING' | 'PAID' | 'FULFILLMENT_PENDING' | 'FULFILLMENT_IN_PROGRESS' | 'FULFILLED' | 'FULFILLMENT_FAILED',
+    notes?: string
+  ) {
+    const fulfillment = await db.expressFixFulfillment.findUnique({
+      where: { paymentId },
+    });
+
+    if (!fulfillment) {
+      return null;
+    }
+
+    const updated = await db.expressFixFulfillment.update({
+      where: { paymentId },
+      data: {
+        status,
+        notes,
+        ...(status === 'FULFILLED' ? { completedAt: new Date() } : {}),
+      },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId: fulfillment.organizationId,
+        type: 'EXPRESS_FIX_FULFILLMENT_UPDATED',
+        providerEventId: paymentId,
+        data: { fulfillmentId: fulfillment.id, status, notes },
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Get Express Fix fulfillment status
+   */
+  async getExpressFixFulfillment(paymentId: string) {
+    return db.expressFixFulfillment.findUnique({
+      where: { paymentId },
+      include: {
+        website: { select: { id: true, domain: true, url: true } },
+        audit: { select: { id: true, status: true, createdAt: true } },
+        payment: { select: { id: true, amountInPaise: true, currency: true, createdAt: true } },
+      },
+    });
+  }
+
+  /**
    * Validate Payment state transition
    */
   isValidPaymentTransition(from: string, to: string): boolean {
@@ -470,18 +630,100 @@ export class BillingService {
     // 3. Extract organizationId from payload notes if available
     const payloadData = (eventPayload.payload as Record<string, unknown>) || {};
     const paymentEntity = (payloadData.payment as { entity?: Record<string, unknown> })?.entity || {};
-    const notes = (paymentEntity.notes as Record<string, string>) || {};
+    const subscriptionEntity = (payloadData.subscription as { entity?: Record<string, unknown> })?.entity || {};
+    const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
+    const subscriptionNotes = (subscriptionEntity.notes as Record<string, string>) || {};
+    const notes = { ...paymentNotes, ...subscriptionNotes };
     const organizationId = notes.organizationId || null;
 
-    // 4. Process event transactionally
+    // 4. Process event based on type
     if (organizationId) {
-      await db.billingEvent.create({
-        data: {
-          organizationId,
-          type: eventType.toUpperCase().replace(/\./g, '_'),
-          providerEventId: eventId,
-          data: eventPayload as object,
-        },
+      await db.$transaction(async (tx) => {
+        await tx.billingEvent.create({
+          data: {
+            organizationId,
+            type: eventType.toUpperCase().replace(/\./g, '_'),
+            providerEventId: eventId,
+            data: eventPayload as object,
+          },
+        });
+
+        // Handle subscription activation
+        if (eventType === 'subscription.charged' || eventType === 'subscription.activated') {
+          const providerSubscriptionId = subscriptionEntity.id as string;
+          if (providerSubscriptionId) {
+            const subscription = await tx.subscription.findFirst({
+              where: { organizationId, providerSubscriptionId, status: 'CREATED' },
+            });
+            if (subscription && this.isValidSubscriptionTransition(subscription.status, 'ACTIVE')) {
+              await tx.subscription.update({
+                where: { id: subscription.id },
+                data: {
+                  status: 'ACTIVE',
+                  currentPeriodStart: new Date(),
+                  currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
+                },
+              });
+              await tx.billingEvent.create({
+                data: {
+                  organizationId,
+                  type: 'SUBSCRIPTION_ACTIVATED',
+                  providerEventId: providerSubscriptionId,
+                  data: { subscriptionId: subscription.id },
+                },
+              });
+            }
+          }
+        }
+
+        // Handle subscription payment failure
+        if (eventType === 'subscription.charge_failed' || eventType === 'subscription.paused') {
+          const providerSubscriptionId = subscriptionEntity.id as string;
+          if (providerSubscriptionId) {
+            const subscription = await tx.subscription.findFirst({
+              where: { organizationId, providerSubscriptionId, status: { in: ['CREATED', 'ACTIVE'] } },
+            });
+            if (subscription) {
+              await tx.subscription.update({
+                where: { id: subscription.id },
+                data: { status: 'PAST_DUE' },
+              });
+              await tx.billingEvent.create({
+                data: {
+                  organizationId,
+                  type: 'SUBSCRIPTION_PAYMENT_FAILED',
+                  providerEventId: providerSubscriptionId,
+                  data: { subscriptionId: subscription.id },
+                },
+              });
+            }
+          }
+        }
+
+        // Handle Express Fix fulfillment updates
+        const paymentNotes = (paymentEntity.notes as Record<string, string>) || {};
+        if (eventType === 'payment.captured' && paymentNotes.purpose === 'EXPRESS_FIX') {
+          const paymentId = paymentEntity.id as string;
+          if (paymentId) {
+            const fulfillment = await tx.expressFixFulfillment.findUnique({
+              where: { paymentId },
+            });
+            if (fulfillment && fulfillment.status === 'PAYMENT_PENDING') {
+              await tx.expressFixFulfillment.update({
+                where: { paymentId },
+                data: { status: 'FULFILLMENT_PENDING' },
+              });
+              await tx.billingEvent.create({
+                data: {
+                  organizationId,
+                  type: 'EXPRESS_FIX_FULFILLMENT_PENDING',
+                  providerEventId: paymentId,
+                  data: { fulfillmentId: fulfillment.id },
+                },
+              });
+            }
+          }
+        }
       });
     }
 

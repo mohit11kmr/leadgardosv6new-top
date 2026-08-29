@@ -7,3 +7,4 @@ export * from './opengraph.js';
 export * from './mixed-content.js';
 export * from './security-headers.js';
 export * from './tls.js';
+export * from './tracking-page.js';

@@ -74,7 +74,7 @@ const auditWorker = new Worker(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      return await processAudit(job.data.auditId as string, controller.signal);
+      return await processAudit(job.data.auditId as string, controller.signal, job.data.options);
     } finally {
       clearTimeout(timer);
     }

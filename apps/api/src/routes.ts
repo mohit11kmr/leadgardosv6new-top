@@ -42,6 +42,7 @@ import { publicAuditRouter } from './controllers/public/publicAuditController.js
 import { publicReportRouter } from './controllers/public/publicReportController.js';
 import { publicMonitoringRouter } from './controllers/public/publicMonitoringController.js';
 import { publicTestimonialsRouter } from './controllers/public/publicTestimonialsController.js';
+import { guestScanRouter } from './controllers/public/guestScanController.js';
 import { openApiRouter } from './openapi.js';
 import {
   authLimiter,
@@ -223,6 +224,10 @@ apiRouter.use('/public/reports', publicReportRouter);
 apiRouter.use('/public/monitors', publicMonitoringRouter);
 apiRouter.use('/public/monitoring', publicMonitoringRouter);
 apiRouter.use('/public/testimonials', publicTestimonialsRouter);
+
+// --- Public Guest Scan (No Authentication Required) ---
+apiRouter.use('/public', guestScanRouter);
+
 apiRouter.use('/public', openApiRouter);
 
 // --- Auth Routes ---
