@@ -3,7 +3,7 @@ import React from 'react';
 export interface ScoreRingProps {
   score: number;
   label?: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'hero';
   showSubtext?: boolean;
 }
 
@@ -13,9 +13,9 @@ export function ScoreRing({
   size = 'md',
   showSubtext = true,
 }: ScoreRingProps) {
-  const normalized = Math.max(0, Math.min(100, score));
-  const radius = size === 'lg' ? 44 : size === 'md' ? 36 : 28;
-  const stroke = size === 'lg' ? 8 : size === 'md' ? 6 : 4;
+  const normalized = Math.max(0, Math.min(100, Math.round(score)));
+  const radius = size === 'hero' ? 56 : size === 'lg' ? 44 : size === 'md' ? 36 : 28;
+  const stroke = size === 'hero' ? 10 : size === 'lg' ? 8 : size === 'md' ? 6 : 4;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (normalized / 100) * circumference;
 
@@ -23,7 +23,14 @@ export function ScoreRing({
     normalized >= 80 ? 'score-green' : normalized >= 60 ? 'score-yellow' : 'score-red';
 
   return (
-    <div className={`scoreRingWrapper size-${size} ${colorClass}`}>
+    <div
+      className={`scoreRingWrapper size-${size} ${colorClass}`}
+      role="meter"
+      aria-valuenow={normalized}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`${label}: ${normalized} out of 100`}
+    >
       <div className="scoreRingRelative">
         <svg
           className="scoreSvg"

@@ -23,11 +23,11 @@ export function AdminDashboardView() {
   });
 
   return (
-    <div className="viewContainer">
-      <div className="viewHeader">
+    <div className="pageContainer">
+      <div className="pageHeader">
         <div>
-          <h1 className="viewTitle">LeadGuard OS — System Administration</h1>
-          <p className="viewSubtitle">
+          <h1>LeadGuard OS — System Administration</h1>
+          <p>
             Real-time platform telemetry, user security controls, organization billing management, and audit trails.
           </p>
         </div>
@@ -42,48 +42,48 @@ export function AdminDashboardView() {
         </div>
       </div>
 
-      {isLoading && <div className="loadingState">Loading platform metrics...</div>}
-      {error && <div className="errorBanner">{(error as Error).message}</div>}
+      {isLoading && <div className="card">Loading platform metrics...</div>}
+      {error && <div className="card errorBanner">{(error as Error).message}</div>}
 
       {metrics && (
         <>
-          <div className="statsGrid">
-            <div className="statCard primary">
-              <div className="statLabel">Total Users</div>
-              <div className="statValue">{metrics.totalUsers}</div>
-              <div className="statSub">Registered accounts</div>
+          <div className="grid3">
+            <div className="metricCard card highlight">
+              <div className="metricLabel">Total Users</div>
+              <div className="metricValue">{metrics.totalUsers}</div>
+              <div className="metricSubtext">Registered accounts</div>
             </div>
-            <div className="statCard">
-              <div className="statLabel">Organizations</div>
-              <div className="statValue">{metrics.totalOrganizations}</div>
-              <div className="statSub">Workspaces & Teams</div>
+            <div className="metricCard card">
+              <div className="metricLabel">Organizations</div>
+              <div className="metricValue">{metrics.totalOrganizations}</div>
+              <div className="metricSubtext">Workspaces & Teams</div>
             </div>
-            <div className="statCard">
-              <div className="statLabel">Active Subscriptions</div>
-              <div className="statValue">{metrics.totalActiveSubscriptions}</div>
-              <div className="statSub">Commercial plans</div>
+            <div className="metricCard card">
+              <div className="metricLabel">Active Subscriptions</div>
+              <div className="metricValue">{metrics.totalActiveSubscriptions}</div>
+              <div className="metricSubtext">Commercial plans</div>
             </div>
-            <div className="statCard">
-              <div className="statLabel">Captured Revenue</div>
-              <div className="statValue">₹{metrics.totalRevenueRupees.toLocaleString()}</div>
-              <div className="statSub">Platform total</div>
+            <div className="metricCard card">
+              <div className="metricLabel">Captured Revenue</div>
+              <div className="metricValue">₹{metrics.totalRevenueRupees.toLocaleString()}</div>
+              <div className="metricSubtext">Platform total</div>
             </div>
-            <div className="statCard">
-              <div className="statLabel">Audits Performed</div>
-              <div className="statValue">{metrics.totalAudits}</div>
-              <div className="statSub">Failed: {metrics.failedAudits}</div>
+            <div className="metricCard card">
+              <div className="metricLabel">Audits Performed</div>
+              <div className="metricValue">{metrics.totalAudits}</div>
+              <div className="metricSubtext">Failed: {metrics.failedAudits}</div>
             </div>
-            <div className="statCard">
-              <div className="statLabel">Watchdog Runs</div>
-              <div className="statValue">{metrics.totalMonitoringRuns}</div>
-              <div className="statSub">24/7 continuous health</div>
+            <div className="metricCard card">
+              <div className="metricLabel">Watchdog Runs</div>
+              <div className="metricValue">{metrics.totalMonitoringRuns}</div>
+              <div className="metricSubtext">24/7 continuous health</div>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mt-6">
-            <div className="card p-4">
-              <h3 className="font-bold text-lg mb-2">👤 User Management</h3>
-              <p className="text-muted text-sm mb-4">
+          <div className="grid3 mt6">
+            <div className="card p4">
+              <h3 className="fontBold textLg mb2 textPrimary">👤 User Management</h3>
+              <p className="textSecondary textSm mb4">
                 Inspect registered users, disable rogue accounts, and terminate compromised sessions.
               </p>
               <Link to="/admin/users" className="btn btn-primary btn-sm">
@@ -91,9 +91,9 @@ export function AdminDashboardView() {
               </Link>
             </div>
 
-            <div className="card p-4">
-              <h3 className="font-bold text-lg mb-2">🏢 Organization Moderation</h3>
-              <p className="text-muted text-sm mb-4">
+            <div className="card p4">
+              <h3 className="fontBold textLg mb2 textPrimary">🏢 Organization Moderation</h3>
+              <p className="textSecondary textSm mb4">
                 View active tenants, commercial tier entitlements, and suspend policy violations.
               </p>
               <Link to="/admin/organizations" className="btn btn-primary btn-sm">
@@ -101,9 +101,9 @@ export function AdminDashboardView() {
               </Link>
             </div>
 
-            <div className="card p-4">
-              <h3 className="font-bold text-lg mb-2">📜 Admin Audit Trail</h3>
-              <p className="text-muted text-sm mb-4">
+            <div className="card p4">
+              <h3 className="fontBold textLg mb2 textPrimary">📜 Admin Audit Trail</h3>
+              <p className="textSecondary textSm mb4">
                 Explore immutable administrative logs, role modifications, and moderation events.
               </p>
               <Link to="/admin/audit" className="btn btn-primary btn-sm">

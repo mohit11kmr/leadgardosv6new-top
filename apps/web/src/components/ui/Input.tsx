@@ -8,6 +8,8 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 
 export function Input({ label, error, helperText, className = '', id, ...props }: InputProps) {
   const inputId = id || (label ? `input-${label.toLowerCase().replace(/\s+/g, '-')}` : undefined);
+  const errorId = inputId ? `${inputId}-error` : undefined;
+  const helperId = inputId ? `${inputId}-helper` : undefined;
 
   return (
     <div className="inputGroup">
@@ -19,10 +21,20 @@ export function Input({ label, error, helperText, className = '', id, ...props }
       <input
         id={inputId}
         className={`inputField ${error ? 'error' : ''} ${className}`.trim()}
+        aria-invalid={error ? 'true' : undefined}
+        aria-describedby={error ? errorId : helperText ? helperId : undefined}
         {...props}
       />
-      {error && <span className="inputError">{error}</span>}
-      {helperText && !error && <span className="inputHelper">{helperText}</span>}
+      {error && (
+        <span id={errorId} className="inputError" role="alert">
+          {error}
+        </span>
+      )}
+      {helperText && !error && (
+        <span id={helperId} className="inputHelper">
+          {helperText}
+        </span>
+      )}
     </div>
   );
 }
