@@ -189,6 +189,10 @@ export class PublicAuditService {
             severity: true,
             scoreImpact: true,
             recommendation: true,
+            businessImpact: true,
+            affectedUrl: true,
+            evidence: true,
+            normalizedIssueKey: true,
           },
         },
       },
@@ -201,6 +205,30 @@ export class PublicAuditService {
     }
 
     return this.formatAuditDto(audit);
+  }
+
+  private sanitizeEvidence(evidence: any): any {
+    if (!evidence || typeof evidence !== 'object') {
+      return evidence;
+    }
+    const sanitized = { ...evidence };
+    delete sanitized.headers;
+    delete sanitized.cookies;
+    delete sanitized.authorization;
+    delete sanitized.token;
+    delete sanitized.secret;
+    delete sanitized.password;
+    delete sanitized.key;
+    delete sanitized.signature;
+    delete sanitized.rawBody;
+    delete sanitized.requestBody;
+    delete sanitized.responseBody;
+    for (const key of Object.keys(sanitized)) {
+      if (sanitized[key] && typeof sanitized[key] === 'object') {
+        sanitized[key] = this.sanitizeEvidence(sanitized[key]);
+      }
+    }
+    return sanitized;
   }
 
   private formatAuditDto(audit: any): PublicAuditDTO {
@@ -231,6 +259,10 @@ export class PublicAuditService {
             severity: f.severity,
             scoreImpact: f.scoreImpact,
             recommendation: f.recommendation,
+            businessImpact: f.businessImpact || null,
+            affectedUrl: f.affectedUrl || null,
+            evidence: this.sanitizeEvidence(f.evidence),
+            normalizedIssueKey: f.normalizedIssueKey,
           }))
         : undefined,
       totalFindings: audit.findings ? audit.findings.length : 0,

@@ -2,6 +2,19 @@ import React, { useState } from 'react';
 import { Badge } from './Badge.js';
 import { IconAlertTriangle, IconAlertCircle, IconInfo, IconExternalLink, IconChevronDown, IconChevronUp, IconCheck } from './Icons.js';
 
+export interface FindingEvidenceData {
+  source?: string | null;
+  observed?: string | null;
+  location?: string | null;
+  why?: string | null;
+  recommendation?: string | null;
+  element?: string | null;
+  expectedPattern?: string | null;
+  ruleId?: string | null;
+  value?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface FindingCardProps {
   finding: {
     id?: string;
@@ -11,17 +24,9 @@ export interface FindingCardProps {
     category: string;
     affectedUrl?: string | null;
     recommendation?: string;
-    businessImpact?: string;
+    businessImpact?: string | null;
     scoreImpact?: number;
-    evidence?: {
-      why?: string;
-      observed?: string;
-      location?: string;
-      recommendation?: string;
-      element?: string;
-      expectedPattern?: string;
-      ruleId?: string;
-    } | null;
+    evidence?: FindingEvidenceData | null;
   };
   rank?: number;
   onExpressFixClick?: () => void;

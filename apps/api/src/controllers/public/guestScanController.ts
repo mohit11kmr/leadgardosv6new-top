@@ -13,7 +13,7 @@ const guestScanSchema = z.object({
 });
 
 const guestFunnelEventSchema = z.object({
-  scanId: z.string().uuid(),
+  scanId: z.string().uuid().optional(),
   event: z.enum([
     FUNNEL_EVENTS.RESULT_VIEWED,
     FUNNEL_EVENTS.EXPRESS_FIX_CLICKED,
@@ -114,10 +114,20 @@ guestScanRouter.get('/scan/:scanId/status', async (req: Request, res: Response, 
 // exposed back to the visitor.
 guestScanRouter.post('/scan/:scanId/funnel', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const scanIdParam = req.params.scanId as string;
+    const paramValidation = z.string().uuid().safeParse(scanIdParam);
+    if (!paramValidation.success) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ARGUMENT', message: 'Invalid scan ID format in URL' },
+      });
+    }
+
     const input = guestFunnelEventSchema.parse(req.body);
+    const targetScanId = input.scanId || scanIdParam;
 
     // Validate the scan exists and is owned by the guest org before recording.
-    const scanResult = await guestScanService.getGuestScanResult(input.scanId);
+    const scanResult = await guestScanService.getGuestScanResult(targetScanId);
     if (!scanResult) {
       return res.status(404).json({
         success: false,
@@ -133,11 +143,26 @@ guestScanRouter.post('/scan/:scanId/funnel', async (req: Request, res: Response,
       websiteId: scanResult.website.id,
       auditId: scanResult.id,
       sessionId: input.sessionId || undefined,
-      data: { clientIp: getClientIp(req) },
+      // F1: Data minimization - do not persist raw client IP
     });
 
     res.json({ success: true });
   } catch (error: any) {
-    res.json({ success: true });
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ARGUMENT', message: 'Invalid funnel event payload', details: error.errors },
+      });
+    }
+    console.log(JSON.stringify({
+      level: 'error',
+      service: 'funnel',
+      event: 'funnel_endpoint_error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }));
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL', message: 'Internal server error' },
+    });
   }
 });

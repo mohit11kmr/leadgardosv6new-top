@@ -18,6 +18,8 @@ export interface PublicAuditScoreDTO {
   security: number;
 }
 
+export type FindingEvidence = Record<string, unknown> | string | null;
+
 export interface PublicAuditFindingDTO {
   id: string;
   title: string;
@@ -28,7 +30,8 @@ export interface PublicAuditFindingDTO {
   recommendation: string;
   businessImpact?: string | null;
   affectedUrl?: string | null;
-  evidence?: string | null;
+  evidence?: FindingEvidence;
+  normalizedIssueKey?: string;
 }
 
 export interface OpportunityLossEstimate {

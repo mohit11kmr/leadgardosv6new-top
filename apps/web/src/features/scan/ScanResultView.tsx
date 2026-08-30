@@ -29,7 +29,7 @@ interface ScanResult {
     recommendation: string;
     businessImpact?: string | null;
     affectedUrl?: string;
-    evidence?: any;
+    evidence?: Record<string, unknown> | null;
     normalizedIssueKey?: string;
   }> | undefined;
   totalFindings: number;
