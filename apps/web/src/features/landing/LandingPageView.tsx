@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { apiClient } from '../../api/client.js';
+import { apiClient, ApiError } from '../../api/client.js';
 import { getPlans, type Plan } from '../../api/billing.js';
 import { Badge } from '../../components/ui/Badge.js';
 import { ScoreRing } from '../../components/ui/ScoreRing.js';
@@ -136,13 +136,13 @@ export function LandingPageView() {
     }
 
     try {
-      const result = await apiClient<{ success: boolean; data: { scanId: string; status: string } }>('/public/free-scan', {
+      const result = await apiClient<{ scanId: string; status: string }>('/public/free-scan', {
         method: 'POST',
         body: JSON.stringify({ url: cleanUrl }),
       });
 
-      if (result.success && result.data?.scanId) {
-        navigate(`/scan/${result.data.scanId}`);
+      if (result?.scanId) {
+        navigate(`/scan/${result.scanId}`);
       } else {
         const errorMsg = 'Failed to start scan. Please check your URL and try again.';
         if (isBottom) {
@@ -153,11 +153,16 @@ export function LandingPageView() {
           setErrorMessage(errorMsg);
         }
       }
-    } catch (err: any) {
-      const errorMsg =
-        err.response?.status === 429
-          ? 'Public rate limit reached (3 scans/hour per IP). Please wait or create a free account.'
-          : err.response?.data?.error?.message || 'Unable to scan this domain. Please ensure it is a valid, publicly reachable HTTP/HTTPS URL.';
+    } catch (err) {
+      let errorMsg = 'Unable to scan this domain. Please ensure it is a valid, publicly reachable HTTP/HTTPS URL.';
+
+      if (err instanceof ApiError) {
+        if (err.statusCode === 429) {
+          errorMsg = 'Public rate limit reached (3 scans/hour per IP). Please wait or create a free account.';
+        } else if (err.message) {
+          errorMsg = err.message;
+        }
+      }
       
       if (isBottom) {
         setBottomSubmitState('error');

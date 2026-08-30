@@ -12,7 +12,7 @@ import type {
   RazorpayPayment,
 } from './types.js';
 
-export type PaymentProviderMode = 'TEST' | 'LIVE';
+export type PaymentProviderMode = 'MOCK' | 'TEST' | 'LIVE';
 
 export class RazorpayProvider implements PaymentProvider {
   public readonly mode: PaymentProviderMode;
@@ -69,6 +69,15 @@ export class RazorpayProvider implements PaymentProvider {
   }
 
   async createOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
+    if (this.mode === 'MOCK') {
+      return {
+        orderId: `order_mock_${randomBytes(12).toString('hex')}`,
+        amount: input.amountInPaise,
+        currency: input.currency,
+        keyId: this.keyId,
+      };
+    }
+
     const response = await fetch(`${this.getBaseUrl()}/orders`, {
       method: 'POST',
       headers: {
@@ -99,6 +108,14 @@ export class RazorpayProvider implements PaymentProvider {
   }
 
   async createSubscription(input: CreateSubscriptionInput): Promise<CreateSubscriptionResult> {
+    if (this.mode === 'MOCK') {
+      return {
+        subscriptionId: `sub_mock_${randomBytes(12).toString('hex')}`,
+        shortUrl: `https://mock.razorpay.com/subscriptions/mock_${randomBytes(6).toString('hex')}`,
+        status: 'active',
+      };
+    }
+
     const response = await fetch(`${this.getBaseUrl()}/subscriptions`, {
       method: 'POST',
       headers: {
@@ -131,6 +148,10 @@ export class RazorpayProvider implements PaymentProvider {
     subscriptionId: string,
     cancelImmediately = false
   ): Promise<{ cancelled: boolean }> {
+    if (this.mode === 'MOCK') {
+      return { cancelled: true };
+    }
+
     const response = await fetch(`${this.getBaseUrl()}/subscriptions/${subscriptionId}/cancel`, {
       method: 'POST',
       headers: {
@@ -153,6 +174,23 @@ export class RazorpayProvider implements PaymentProvider {
   }
 
   async fetchOrder(orderId: string): Promise<RazorpayOrder> {
+    if (this.mode === 'MOCK') {
+      return {
+        id: orderId,
+        entity: 'order',
+        amount: 0,
+        amount_paid: 0,
+        amount_due: 0,
+        currency: 'INR',
+        receipt: '',
+        offer_id: null,
+        status: 'created',
+        attempts: 0,
+        notes: {},
+        created_at: Math.floor(Date.now() / 1000),
+      };
+    }
+
     const response = await fetch(`${this.getBaseUrl()}/orders/${orderId}`, {
       method: 'GET',
       headers: {
@@ -171,6 +209,40 @@ export class RazorpayProvider implements PaymentProvider {
   }
 
   async fetchPayment(paymentId: string): Promise<RazorpayPayment> {
+    if (this.mode === 'MOCK') {
+      return {
+        id: paymentId,
+        entity: 'payment',
+        amount: 0,
+        currency: 'INR',
+        status: 'captured',
+        order_id: '',
+        invoice_id: null,
+        international: false,
+        method: 'card',
+        amount_refunded: 0,
+        refund_status: null,
+        captured: true,
+        description: null,
+        card_id: null,
+        bank: null,
+        wallet: null,
+        vpa: null,
+        email: null,
+        contact: null,
+        notes: {},
+        fee: 0,
+        tax: 0,
+        error_code: null,
+        error_description: null,
+        error_source: null,
+        error_step: null,
+        error_reason: null,
+        acquirer_data: null,
+        created_at: Math.floor(Date.now() / 1000),
+      };
+    }
+
     const response = await fetch(`${this.getBaseUrl()}/payments/${paymentId}`, {
       method: 'GET',
       headers: {

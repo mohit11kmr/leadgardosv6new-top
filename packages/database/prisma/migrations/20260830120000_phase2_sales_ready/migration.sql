@@ -1,3 +1,23 @@
+-- CreateEnum
+CREATE TYPE "ExpressFixStatus" AS ENUM ('ORDER_CREATED', 'PAYMENT_PENDING', 'PAID', 'FULFILLMENT_PENDING', 'FULFILLMENT_IN_PROGRESS', 'FULFILLED', 'FULFILLMENT_FAILED');
+
+-- CreateTable
+CREATE TABLE "ExpressFixFulfillment" (
+    "id" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "websiteId" TEXT NOT NULL,
+    "auditId" TEXT,
+    "paymentId" TEXT NOT NULL,
+    "status" "ExpressFixStatus" NOT NULL DEFAULT 'ORDER_CREATED',
+    "notes" TEXT,
+    "assignedTo" TEXT,
+    "completedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ExpressFixFulfillment_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateTable
 CREATE TABLE "ExpressFixLead" (
     "id" TEXT NOT NULL,
@@ -31,6 +51,12 @@ CREATE TABLE "FunnelEvent" (
 );
 
 -- CreateIndex
+CREATE INDEX "ExpressFixFulfillment_organizationId_status_idx" ON "ExpressFixFulfillment"("organizationId", "status");
+
+-- CreateIndex
+CREATE INDEX "ExpressFixFulfillment_paymentId_idx" ON "ExpressFixFulfillment"("paymentId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "ExpressFixLead_paymentId_key" ON "ExpressFixLead"("paymentId");
 
 -- CreateIndex
@@ -50,6 +76,18 @@ CREATE INDEX "FunnelEvent_organizationId_type_createdAt_idx" ON "FunnelEvent"("o
 
 -- CreateIndex
 CREATE INDEX "FunnelEvent_auditId_createdAt_idx" ON "FunnelEvent"("auditId", "createdAt");
+
+-- AddForeignKey
+ALTER TABLE "ExpressFixFulfillment" ADD CONSTRAINT "ExpressFixFulfillment_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExpressFixFulfillment" ADD CONSTRAINT "ExpressFixFulfillment_websiteId_fkey" FOREIGN KEY ("websiteId") REFERENCES "Website"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExpressFixFulfillment" ADD CONSTRAINT "ExpressFixFulfillment_auditId_fkey" FOREIGN KEY ("auditId") REFERENCES "Audit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExpressFixFulfillment" ADD CONSTRAINT "ExpressFixFulfillment_paymentId_fkey" FOREIGN KEY ("paymentId") REFERENCES "Payment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ExpressFixLead" ADD CONSTRAINT "ExpressFixLead_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -74,4 +112,3 @@ ALTER TABLE "FunnelEvent" ADD CONSTRAINT "FunnelEvent_websiteId_fkey" FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE "FunnelEvent" ADD CONSTRAINT "FunnelEvent_auditId_fkey" FOREIGN KEY ("auditId") REFERENCES "Audit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-

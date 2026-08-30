@@ -347,11 +347,11 @@ export class BillingService {
       organizationId,
       input.websiteId,
       input.auditId,
-      input.paymentId
+      payment.id
     );
 
     // Update fulfillment status to PAID
-    await this.updateExpressFixFulfillment(input.paymentId, 'PAID');
+    await this.updateExpressFixFulfillment(payment.id, 'PAID');
 
     return { payment, invoice, duplicate: false };
   }
@@ -379,12 +379,17 @@ export class BillingService {
     const currentPeriodStart = new Date();
     const currentPeriodEnd = new Date(Date.now() + 30 * 86400000);
 
-    // Create subscription record in CREATED status - will be activated via webhook
+    // Create subscription record. If the provider confirms synchronously
+    // (e.g. MOCK returns status "active"), activate immediately; otherwise
+    // persist in CREATED status and let the webhook activate it later.
+    const providerStatus = (subResult.status || '').toLowerCase();
+    const initialStatus = providerStatus === 'active' ? 'ACTIVE' : 'CREATED';
+
     const subscription = await db.subscription.create({
       data: {
         organizationId,
         planId: plan.id,
-        status: 'CREATED',
+        status: initialStatus,
         provider: 'RAZORPAY',
         providerSubscriptionId: subResult.subscriptionId,
         currentPeriodStart,

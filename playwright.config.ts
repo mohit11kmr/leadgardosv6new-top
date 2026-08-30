@@ -20,6 +20,12 @@ export default defineConfig({
         REFRESH_TOKEN_SECRET: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         APP_URL: 'http://localhost:5173',
         API_URL: 'http://localhost:4000',
+        // Deterministic payment provider mode + placeholder keys so the API
+        // boots without external Razorpay credentials.
+        PAYMENT_PROVIDER_MODE: 'MOCK',
+        RAZORPAY_KEY_ID: 'rzp_test_placeholder_key_id',
+        RAZORPAY_KEY_SECRET: 'placeholder_key_secret',
+        RAZORPAY_WEBHOOK_SECRET: 'placeholder_webhook_secret',
       },
     },
     {

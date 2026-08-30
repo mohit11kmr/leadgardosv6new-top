@@ -30,16 +30,19 @@ export class BillingReconciliationService {
     const discrepancies: ReconciliationDiscrepancy[] = [];
 
     for (const sub of subscriptions) {
-      if (razorpayProvider.mode === 'TEST') {
-        // In TEST mode, verify local referential integrity
-        if (!sub.providerSubscriptionId?.startsWith('sub_test_')) {
+      // In the offline/dev modes (TEST and MOCK) we can never verify the local
+      // id against the provider, so we validate structural referential
+      // integrity of the subscription id instead.
+      if (['TEST', 'MOCK'].includes(razorpayProvider.mode)) {
+        const validPrefix = razorpayProvider.mode === 'TEST' ? 'sub_test_' : 'sub_mock_';
+        if (!sub.providerSubscriptionId?.startsWith(validPrefix)) {
           discrepancies.push({
             entityType: 'SUBSCRIPTION',
             entityId: sub.id,
             providerId: sub.providerSubscriptionId || '',
             field: 'providerSubscriptionId',
             localValue: sub.providerSubscriptionId,
-            providerValue: 'sub_test_*',
+            providerValue: `${validPrefix}*`,
             severity: 'MEDIUM',
           });
         }
@@ -71,10 +74,11 @@ export class BillingReconciliationService {
     const discrepancies: ReconciliationDiscrepancy[] = [];
 
     // Razorpay payment IDs always follow the `pay_` prefix (e.g. pay_9A2k...) in
-    // both TEST and LIVE sandbox responses. In TEST mode we additionally verify
-    // structural referential integrity of provider-bound fields, mirroring the
-    // same hardening applied to subscriptions.
-    const isTestMode = razorpayProvider.mode === 'TEST';
+    // both TEST and LIVE sandbox responses. In the offline/dev modes (TEST and
+    // MOCK) we additionally verify structural referential integrity of
+    // provider-bound fields, mirroring the same hardening applied to
+    // subscriptions.
+    const runStructuralChecks = ['TEST', 'MOCK'].includes(razorpayProvider.mode);
 
     for (const pmt of payments) {
       if (pmt.amountInPaise <= 0) {
@@ -89,7 +93,7 @@ export class BillingReconciliationService {
         });
       }
 
-      if (isTestMode) {
+      if (runStructuralChecks) {
         if (!/^pay_[A-Za-z0-9]+$/.test(pmt.providerPaymentId)) {
           discrepancies.push({
             entityType: 'PAYMENT',
@@ -102,7 +106,9 @@ export class BillingReconciliationService {
           });
         }
 
-        if (pmt.providerOrderId && !/^order_[A-Za-z0-9]+$/.test(pmt.providerOrderId)) {
+        // Accept the standard alphanumeric `order_<id>` form as well as the
+        // MOCK mode variant `order_mock_<id>`.
+        if (pmt.providerOrderId && !/^order_(mock_)?[A-Za-z0-9]+$/.test(pmt.providerOrderId)) {
           discrepancies.push({
             entityType: 'PAYMENT',
             entityId: pmt.id,

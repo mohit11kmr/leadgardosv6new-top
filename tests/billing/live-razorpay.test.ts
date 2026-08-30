@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { RazorpayProvider } from '../../apps/api/src/billing/razorpayProvider.js';
 
 describe('Billing: Real Razorpay Sandbox API Integration (TEST Mode)', () => {
-  const hasCredentials =
-    Boolean(process.env.RAZORPAY_KEY_ID) &&
-    Boolean(process.env.RAZORPAY_KEY_SECRET);
+  const keyId = process.env.RAZORPAY_KEY_ID || '';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+  // Only run against genuine sandbox credentials (real rzp_test_ keys), never
+  // against the placeholder fixtures used by the deterministic MOCK suite.
+  const hasRealCredentials =
+    Boolean(keyId) && Boolean(keySecret) && !keyId.includes('placeholder') && !keySecret.includes('placeholder');
 
-  it.runIf(hasCredentials)(
+  it.runIf(hasRealCredentials)(
     'creates a real order on Razorpay Sandbox via HTTPS REST API',
     async () => {
       const originalMode = process.env.PAYMENT_PROVIDER_MODE;

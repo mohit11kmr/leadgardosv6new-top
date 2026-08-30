@@ -19,13 +19,13 @@ test('user registration, website management, and executive dashboard flow', asyn
   // 2. Verified navigation to Dashboard
   await expect(page).toHaveURL(/dashboard/);
   await expect(page.getByText(/Acme Corp/i)).toBeVisible();
-  await expect(page.getByText(/No Websites Added Yet/i)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Welcome to Your Revenue Intelligence Center/i })).toBeVisible();
 
   // 3. Add Website
   await page.goto('/websites');
-  await page.getByRole('button', { name: /\+ Add Website/i }).click();
-  await page.getByLabel(/Website Name/i).fill('Acme Global');
-  await page.getByLabel(/Target URL/i).fill('https://example.com');
+  await page.getByRole('button', { name: /Add Website/i }).first().click();
+  await page.getByPlaceholder(/Acme Production Portal/i).fill('Acme Global');
+  await page.getByPlaceholder('https://example.com').fill('https://example.com');
   await page.getByRole('button', { name: /Register & Save/i }).click();
 
   // 4. Verify Website in Catalog
@@ -34,6 +34,6 @@ test('user registration, website management, and executive dashboard flow', asyn
 
   // 5. Navigate to Dashboard and verify website state updated
   await page.goto('/dashboard');
-  await expect(page.getByText(/Executive Revenue & Diagnostic Intelligence/i)).toBeVisible();
+  await expect(page.getByText(/Revenue & Diagnostic Intelligence/i)).toBeVisible();
   await expect(page.getByText(/No Audits Executed/i)).toBeVisible();
 });
