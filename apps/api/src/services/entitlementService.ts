@@ -183,6 +183,31 @@ export class EntitlementService {
     });
   }
 
+  async releaseUsage(
+    organizationId: string,
+    metric: 'AUDITS' | 'WEBSITES' | 'API_REQUESTS' | 'MONITORING',
+    decrement = 1
+  ) {
+    const period = this.getCurrentPeriod();
+    const current = await db.usageRecord.findUnique({
+      where: {
+        organizationId_period_metric: {
+          organizationId,
+          period,
+          metric,
+        },
+      },
+    });
+
+    if (!current) return null;
+
+    const count = Math.max(0, current.count - decrement);
+    if (count === 0) {
+      return db.usageRecord.delete({ where: { id: current.id } });
+    }
+    return db.usageRecord.update({ where: { id: current.id }, data: { count } });
+  }
+
   async canRunAudit(organizationId: string): Promise<{ allowed: boolean; reason?: string }> {
     const { entitlements } = await this.getOrganizationPlan(organizationId);
     const auditsUsed = await this.getCurrentUsage(organizationId, 'AUDITS');
@@ -209,6 +234,11 @@ export class EntitlementService {
       };
     }
     return { allowed: true };
+  }
+
+  async getAllowedWebsites(organizationId: string): Promise<number> {
+    const { entitlements } = await this.getOrganizationPlan(organizationId);
+    return entitlements.websites;
   }
 
   async canUseMonitoring(organizationId: string): Promise<{ allowed: boolean; reason?: string }> {

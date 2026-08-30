@@ -142,11 +142,32 @@ app.use(
       });
     }
 
-    response.status(isValidation ? 400 : 500).json({
+    const codeMap: Record<string, { status: number; code: string; message: string }> = {
+      PLAN_LIMIT_REACHED: { status: 403, code: 'PLAN_LIMIT_REACHED', message: 'Plan limit reached' },
+      NOT_FOUND: { status: 404, code: 'NOT_FOUND', message: 'Resource not found' },
+      VALIDATION_ERROR: { status: 400, code: 'VALIDATION_ERROR', message: 'Request validation failed' },
+      PAYMENT_REQUIRED: { status: 402, code: 'PAYMENT_REQUIRED', message: 'Payment required' },
+      RATE_LIMITED: { status: 429, code: 'RATE_LIMITED', message: 'Rate limit exceeded' },
+      CONFLICT: { status: 409, code: 'CONFLICT', message: 'Conflict' },
+    };
+    const prismaCode = (error as { code?: string } | null)?.code;
+
+    let mapped: { status: number; code: string; message: string };
+    if (isValidation) {
+      mapped = codeMap.VALIDATION_ERROR;
+    } else if (prismaCode === 'P2002') {
+      mapped = codeMap.CONFLICT;
+    } else if (error instanceof Error && codeMap[error.message]) {
+      mapped = codeMap[error.message];
+    } else {
+      mapped = { status: 500, code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' };
+    }
+
+    response.status(mapped.status).json({
       success: false,
       error: {
-        code: isValidation ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
-        message: isValidation ? 'Request validation failed' : 'An unexpected error occurred',
+        code: mapped.code,
+        message: mapped.message,
         requestId: request.header('x-request-id') ?? '',
       },
     });

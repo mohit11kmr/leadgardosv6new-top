@@ -11,8 +11,12 @@ export async function validateExternalUrl(value: string): Promise<URL> {
     throw new Error('Only credential-free HTTP(S) URLs are allowed');
   }
 
-  // Allow loopback for controlled testing environments when explicitly enabled
-  if (process.env.ALLOW_LOCAL_FIXTURES === 'true') {
+  // Allow loopback for controlled testing environments when explicitly enabled.
+  // Never honored in production to prevent SSRF via a misconfigured flag.
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.ALLOW_LOCAL_FIXTURES === 'true'
+  ) {
     return url;
   }
 

@@ -1,10 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { db } from '@leadguard/database';
+import { db, type Prisma } from '@leadguard/database';
 import { razorpayProvider } from '../billing/razorpayProvider.js';
 import { recordSecurityEvent } from '../auth.js';
 import { systemGuestOrganizationService } from './systemGuestOrganizationService.js';
 import { leadService } from './leadService.js';
 import { funnelEventService, FUNNEL_EVENTS } from './funnelEventService.js';
+
+type TxClient = Prisma.TransactionClient;
+type DbClient = TxClient | typeof db;
+
+let plansSeeded: Promise<unknown> | null = null;
 
 export const DEFAULT_COMMERCIAL_PLANS = [
   {
@@ -115,7 +120,17 @@ const VALID_SUBSCRIPTION_TRANSITIONS: Record<string, string[]> = {
 };
 
 export class BillingService {
-  async ensurePlansSeeded() {
+  ensurePlansSeeded() {
+    if (!plansSeeded) {
+      plansSeeded = this.runPlanSeeding().catch((error) => {
+        plansSeeded = null;
+        throw error;
+      });
+    }
+    return plansSeeded;
+  }
+
+  private async runPlanSeeding() {
     for (const plan of DEFAULT_COMMERCIAL_PLANS) {
       await db.plan.upsert({
         where: { code: plan.code },
@@ -297,61 +312,66 @@ export class BillingService {
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
     const amountInPaise = 299900; // Authoritative price
 
-    const [payment, invoice] = await db.$transaction([
-      db.payment.create({
-        data: {
-          organizationId,
-          provider: 'RAZORPAY',
-          providerPaymentId: input.paymentId,
-          providerOrderId: input.orderId,
-          providerSignature: input.signature,
-          amountInPaise,
-          currency: 'INR',
-          status: 'CAPTURED',
-          purpose: 'EXPRESS_FIX',
-          metadata: {
-            websiteId: input.websiteId,
-            auditId: input.auditId,
-            verifiedAt: new Date().toISOString(),
-          },
-        },
-      }),
-      db.invoice.create({
-        data: {
-          organizationId,
-          invoiceNumber,
-          amountInPaise,
-          currency: 'INR',
-          status: 'PAID',
-          paidAt: new Date(),
-          billingAddress: { country: 'IN' },
-          taxInfo: { gstin: null, taxType: 'GST_INCLUSIVE' },
-        },
-      }),
-      db.billingEvent.create({
-        data: {
-          organizationId,
-          type: 'PAYMENT_CAPTURED',
-          providerEventId: input.paymentId,
+    const { payment, invoice } = await db.$transaction(
+      async (tx) => {
+        const payment = await tx.payment.create({
           data: {
-            amount: amountInPaise,
+            organizationId,
+            provider: 'RAZORPAY',
+            providerPaymentId: input.paymentId,
+            providerOrderId: input.orderId,
+            providerSignature: input.signature,
+            amountInPaise,
+            currency: 'INR',
+            status: 'CAPTURED',
             purpose: 'EXPRESS_FIX',
-            invoiceNumber,
+            metadata: {
+              websiteId: input.websiteId,
+              auditId: input.auditId,
+              verifiedAt: new Date().toISOString(),
+            },
           },
-        },
-      }),
-    ]);
+        });
 
-    // Create fulfillment record
-    await this.createExpressFixFulfillment(
-      organizationId,
-      input.websiteId,
-      input.auditId,
-      payment.id
+        const invoice = await tx.invoice.create({
+          data: {
+            organizationId,
+            invoiceNumber,
+            amountInPaise,
+            currency: 'INR',
+            status: 'PAID',
+            paidAt: new Date(),
+            billingAddress: { country: 'IN' },
+            taxInfo: { gstin: null, taxType: 'GST_INCLUSIVE' },
+          },
+        });
+
+        await tx.billingEvent.create({
+          data: {
+            organizationId,
+            type: 'PAYMENT_CAPTURED',
+            providerEventId: input.paymentId,
+            data: {
+              amount: amountInPaise,
+              purpose: 'EXPRESS_FIX',
+              invoiceNumber,
+            },
+          },
+        });
+
+        await this.createExpressFixFulfillment(
+          organizationId,
+          input.websiteId,
+          input.auditId,
+          payment.id,
+          tx
+        );
+        await this.updateExpressFixFulfillment(payment.id, 'PAID', undefined, tx);
+
+        return { payment, invoice };
+      },
+      { maxWait: 5000, timeout: 10000 }
     );
-
-    // Update fulfillment status to PAID
-    await this.updateExpressFixFulfillment(payment.id, 'PAID');
 
     return { payment, invoice, duplicate: false };
   }
@@ -419,26 +439,56 @@ export class BillingService {
 
     if (!activeSub) throw new Error('No active subscription found to cancel');
 
+    // Cancel at the provider first, then persist locally. If the local write
+    // fails, retry once so the DB does not drift from the provider state.
     await razorpayProvider.cancelSubscription(activeSub.providerSubscriptionId || '', false);
 
-    const updated = await db.subscription.update({
-      where: { id: activeSub.id },
-      data: {
-        cancelAtPeriodEnd: true,
-        canceledAt: new Date(),
-        status: 'CANCELLED',
-      },
-    });
+    try {
+      return await this.persistCancellation(activeSub, organizationId, userId);
+    } catch (error) {
+      try {
+        return await this.persistCancellation(activeSub, organizationId, userId);
+      } catch (retryError) {
+        void retryError;
+      }
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'billing',
+          event: 'subscription_cancel_persist_failed',
+          subscriptionId: activeSub.id,
+          providerSubscriptionId: activeSub.providerSubscriptionId,
+          organizationId,
+          providerAlreadyCancelled: true,
+        })
+      );
+      throw error;
+    }
+  }
 
-    await db.billingEvent.create({
-      data: {
-        organizationId,
-        type: 'SUBSCRIPTION_CANCELLED',
-        providerEventId: activeSub.providerSubscriptionId,
-        data: { subscriptionId: activeSub.id },
-      },
-    });
-
+  private async persistCancellation(
+    activeSub: { id: string; providerSubscriptionId: string | null },
+    organizationId: string,
+    userId: string
+  ) {
+    const [updated] = await db.$transaction([
+      db.subscription.update({
+        where: { id: activeSub.id },
+        data: {
+          cancelAtPeriodEnd: true,
+          canceledAt: new Date(),
+          status: 'CANCELLED',
+        },
+      }),
+      db.billingEvent.create({
+        data: {
+          organizationId,
+          type: 'SUBSCRIPTION_CANCELLED',
+          providerEventId: activeSub.providerSubscriptionId,
+          data: { subscriptionId: activeSub.id, userId, requestedAt: new Date().toISOString() },
+        },
+      }),
+    ]);
     return updated;
   }
 
@@ -515,9 +565,10 @@ export class BillingService {
     organizationId: string,
     websiteId: string,
     auditId: string | undefined,
-    paymentId: string
+    paymentId: string,
+    client: DbClient = db
   ) {
-    const fulfillment = await db.expressFixFulfillment.create({
+    const fulfillment = await client.expressFixFulfillment.create({
       data: {
         organizationId,
         websiteId,
@@ -527,7 +578,7 @@ export class BillingService {
       },
     });
 
-    await db.billingEvent.create({
+    await client.billingEvent.create({
       data: {
         organizationId,
         type: 'EXPRESS_FIX_FULFILLMENT_CREATED',
@@ -555,9 +606,10 @@ export class BillingService {
   async updateExpressFixFulfillment(
     paymentId: string,
     status: 'PAYMENT_PENDING' | 'PAID' | 'FULFILLMENT_PENDING' | 'FULFILLMENT_IN_PROGRESS' | 'FULFILLED' | 'FULFILLMENT_FAILED',
-    notes?: string
+    notes?: string,
+    client: DbClient = db
   ) {
-    const fulfillment = await db.expressFixFulfillment.findUnique({
+    const fulfillment = await client.expressFixFulfillment.findUnique({
       where: { paymentId },
     });
 
@@ -565,7 +617,7 @@ export class BillingService {
       return null;
     }
 
-    const updated = await db.expressFixFulfillment.update({
+    const updated = await client.expressFixFulfillment.update({
       where: { paymentId },
       data: {
         status,
@@ -574,7 +626,7 @@ export class BillingService {
       },
     });
 
-    await db.billingEvent.create({
+    await client.billingEvent.create({
       data: {
         organizationId: fulfillment.organizationId,
         type: 'EXPRESS_FIX_FULFILLMENT_UPDATED',
@@ -873,73 +925,78 @@ export class BillingService {
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
     const amountInPaise = 299900; // Authoritative price
 
-    const [payment, invoice] = await db.$transaction([
-      db.payment.create({
-        data: {
-          organizationId: systemGuestOrgId,
-          provider: 'RAZORPAY',
-          providerPaymentId: paymentId,
-          providerOrderId: orderId,
-          providerSignature: signature,
-          amountInPaise,
-          currency: 'INR',
-          status: 'CAPTURED',
-          purpose: 'EXPRESS_FIX',
-          metadata: {
-            websiteId,
-            auditId,
-            customerEmail: orderData.customerEmail,
-            customerName: orderData.customerName,
-            verifiedAt: new Date().toISOString(),
-            providerPaymentStatus: razorpayPayment.status,
-            providerOrderStatus: razorpayOrder.status,
-          },
-        },
-      }),
-      db.invoice.create({
-        data: {
-          organizationId: systemGuestOrgId,
-          invoiceNumber,
-          amountInPaise,
-          currency: 'INR',
-          status: 'PAID',
-          paidAt: new Date(),
-          billingAddress: { country: 'IN' },
-          taxInfo: { gstin: null, taxType: 'GST_INCLUSIVE' },
-        },
-      }),
-      db.billingEvent.create({
-        data: {
-          organizationId: systemGuestOrgId,
-          type: 'PAYMENT_CAPTURED',
-          providerEventId: paymentId,
+    const { payment, invoice, fulfillmentId } = await db.$transaction(
+      async (tx) => {
+        const payment = await tx.payment.create({
           data: {
-            amount: amountInPaise,
+            organizationId: systemGuestOrgId,
+            provider: 'RAZORPAY',
+            providerPaymentId: paymentId,
+            providerOrderId: orderId,
+            providerSignature: signature,
+            amountInPaise,
+            currency: 'INR',
+            status: 'CAPTURED',
             purpose: 'EXPRESS_FIX',
-            invoiceNumber,
-            websiteId,
-            auditId,
-            customerEmail: orderData.customerEmail,
-            customerName: orderData.customerName,
-            providerOrderId: razorpayOrder.id,
-            providerPaymentId: razorpayPayment.id,
+            metadata: {
+              websiteId,
+              auditId,
+              customerEmail: orderData.customerEmail,
+              customerName: orderData.customerName,
+              verifiedAt: new Date().toISOString(),
+              providerPaymentStatus: razorpayPayment.status,
+              providerOrderStatus: razorpayOrder.status,
+            },
           },
-        },
-      }),
-    ]);
+        });
 
-    // 10. Create fulfillment record
-    await this.createExpressFixFulfillment(
-      systemGuestOrgId,
-      websiteId,
-      auditId,
-      paymentId
+        const invoice = await tx.invoice.create({
+          data: {
+            organizationId: systemGuestOrgId,
+            invoiceNumber,
+            amountInPaise,
+            currency: 'INR',
+            status: 'PAID',
+            paidAt: new Date(),
+            billingAddress: { country: 'IN' },
+            taxInfo: { gstin: null, taxType: 'GST_INCLUSIVE' },
+          },
+        });
+
+        await tx.billingEvent.create({
+          data: {
+            organizationId: systemGuestOrgId,
+            type: 'PAYMENT_CAPTURED',
+            providerEventId: paymentId,
+            data: {
+              amount: amountInPaise,
+              purpose: 'EXPRESS_FIX',
+              invoiceNumber,
+              websiteId,
+              auditId,
+              customerEmail: orderData.customerEmail,
+              customerName: orderData.customerName,
+              providerOrderId: razorpayOrder.id,
+              providerPaymentId: razorpayPayment.id,
+            },
+          },
+        });
+
+        const fulfillment = await this.createExpressFixFulfillment(
+          systemGuestOrgId,
+          websiteId,
+          auditId,
+          paymentId,
+          tx
+        );
+        await this.updateExpressFixFulfillment(paymentId, 'FULFILLMENT_PENDING', undefined, tx);
+
+        return { payment, invoice, fulfillmentId: fulfillment.id };
+      },
+      { maxWait: 5000, timeout: 10000 }
     );
 
-    // 11. Update fulfillment status to PAID (fulfillment pending)
-    await this.updateExpressFixFulfillment(paymentId, 'FULFILLMENT_PENDING');
-
-    // 12. Link the captured payment to the captured sales lead (if present)
+    // Link the captured payment to the captured sales lead (if present)
     if (orderData.customerEmail) {
       const lead = await leadService.getOrCreateForAudit({
         organizationId: systemGuestOrgId,
@@ -949,9 +1006,8 @@ export class BillingService {
         name: orderData.customerName,
       });
       await leadService.linkPayment(lead.id, paymentId);
-      const fulfillment = await db.expressFixFulfillment.findUnique({ where: { paymentId } });
-      if (fulfillment) {
-        await leadService.linkFulfillment(lead.id, fulfillment.id);
+      if (fulfillmentId) {
+        await leadService.linkFulfillment(lead.id, fulfillmentId);
       }
     }
 

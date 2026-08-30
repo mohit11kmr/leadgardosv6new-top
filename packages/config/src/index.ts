@@ -11,6 +11,13 @@ dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 export const config = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    // SSRF escape hatch: only honored outside production (see url-security).
+    ALLOW_LOCAL_FIXTURES: z
+      .string()
+      .optional()
+      .refine((v) => v === undefined || v === 'true', {
+        message: 'ALLOW_LOCAL_FIXTURES must be "true" or unset',
+      }),
     DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),
     JWT_SECRET: z.string().min(32),

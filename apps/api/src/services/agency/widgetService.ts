@@ -86,6 +86,7 @@ export class WidgetService {
     const widgets = await db.widget.findMany({
       where: { organizationId },
       orderBy: { createdAt: 'desc' },
+      take: 200,
       include: {
         clientWorkspace: { select: { id: true, name: true } },
       },

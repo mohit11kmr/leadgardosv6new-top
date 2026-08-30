@@ -67,6 +67,7 @@ export class CompetitorService {
     return db.competitorComparison.findMany({
       where: { organizationId },
       orderBy: { createdAt: 'desc' },
+      take: 200,
       include: {
         clientWorkspace: { select: { id: true, name: true } },
       },

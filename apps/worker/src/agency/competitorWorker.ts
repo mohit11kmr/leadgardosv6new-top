@@ -81,7 +81,10 @@ export async function processCompetitorComparisonJob(job: Job<{ comparisonId: st
   const weaknesses: string[] = [];
   const opportunities: string[] = [];
 
-  const avgCompetitorScore = competitorBenchmarks.reduce((a, b) => a + b.score, 0) / competitorBenchmarks.length;
+  const avgCompetitorScore =
+    competitorBenchmarks.length > 0
+      ? competitorBenchmarks.reduce((a, b) => a + b.score, 0) / competitorBenchmarks.length
+      : 0;
 
   if (targetBenchmark.score > avgCompetitorScore) {
     strengths.push(`Higher overall conversion readiness score (${targetBenchmark.score}) vs competitor average (${Math.round(avgCompetitorScore)})`);

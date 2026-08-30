@@ -21,6 +21,24 @@ export const prospectQueue = new Queue('agency-prospect', {
 export const MAX_PROSPECT_IMPORT_ROWS = 500;
 export const MAX_PROSPECT_IMPORT_BYTES = 10 * 1024 * 1024; // 10MB
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const i = index;
+      index += 1;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export interface ProspectInputItem {
   url: string;
   businessName?: string;
@@ -261,11 +279,16 @@ export class ProspectService {
     });
 
     // 4. Validate candidates and deduplicate within campaign
+    const validations = await mapWithConcurrency(rawItems, 10, (item) =>
+      validateSafeProspectUrl(item.url)
+    );
+
     const seenUrls = new Set<string>();
     const validProspects = [];
 
-    for (const item of rawItems) {
-      const val = await validateSafeProspectUrl(item.url);
+    for (let i = 0; i < rawItems.length; i += 1) {
+      const item = rawItems[i];
+      const val = validations[i];
       if (!val.isValid || !val.normalizedUrl || !val.domain) {
         continue;
       }
@@ -432,7 +455,7 @@ export class ProspectService {
 
     const prospects = await db.prospect.findMany({
       where,
-      orderBy: [{ leadScore: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ leadScore: 'asc' }, { createdAt: 'desc' }, { id: 'asc' }],
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
       include: {

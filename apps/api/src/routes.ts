@@ -17,6 +17,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { validateExternalUrl } from './security.js';
+import { getClientIp } from '@leadguard/shared';
 import { auditQueue } from './queue.js';
 import { intelligenceService } from './services/intelligenceService.js';
 import { apiKeyService } from './services/apiKeyService.js';
@@ -32,7 +33,7 @@ import { competitorService } from './services/agency/competitorService.js';
 import { agencyOverviewService } from './services/agency/agencyOverviewService.js';
 import { whiteLabelService } from './services/agency/whiteLabelService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
-import { requirePermission } from './middleware/rbac.js';
+import { requirePermission, requirePlatformAdmin } from './middleware/rbac.js';
 import { reportService } from './services/reportService.js';
 import { adminService } from './services/adminService.js';
 import { settingsService } from './services/settingsService.js';
@@ -67,14 +68,6 @@ export type AuthRequest = Request & {
   cookies?: Record<string, string>;
   rawBody?: string;
 };
-
-function getClientIp(req: Request): string {
-  return (
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.socket.remoteAddress ||
-    '127.0.0.1'
-  );
-}
 
 export function requireAuth(request: AuthRequest, response: Response, next: NextFunction) {
   const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
@@ -958,17 +951,31 @@ apiRouter.post('/websites', requirePermission('WEBSITE_MANAGE'), async (request:
     const input = websiteSchema.parse(request.body);
     const url = await validateExternalUrl(input.url);
     const normalizedUrl = url.toString().replace(/\/$/, '');
-    const website = await db.website.create({
-      data: {
-        organizationId: request.auth!.organizationId,
-        name: input.name,
-        url: input.url,
-        normalizedUrl,
-        domain: url.hostname,
-      },
+    const organizationId = request.auth!.organizationId;
+
+    const website = await db.$transaction(async (tx) => {
+      // Serialize concurrent creates per-organization so plan-limit enforcement
+      // is race-free (advisory lock held until this transaction commits).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${organizationId}))`;
+      const count = await tx.website.count({
+        where: { organizationId, deletedAt: null },
+      });
+      const allowance = await entitlementService.getAllowedWebsites(organizationId);
+      if (count >= allowance) {
+        throw new Error('PLAN_LIMIT_REACHED');
+      }
+      return tx.website.create({
+        data: {
+          organizationId,
+          name: input.name,
+          url: input.url,
+          normalizedUrl,
+          domain: url.hostname,
+        },
+      });
     });
 
-    await entitlementService.recordUsage(request.auth!.organizationId, 'WEBSITES');
+    await entitlementService.recordUsage(organizationId, 'WEBSITES');
     response.status(201).json({ success: true, data: toWebsiteDto(website) });
   } catch (error) {
     next(error);
@@ -1106,7 +1113,31 @@ apiRouter.post('/audits', requirePermission('AUDIT_RUN'), auditCreationLimiter, 
     }
 
     await entitlementService.recordUsage(request.auth!.organizationId, 'AUDITS');
-    await auditQueue.add('audit:create', { auditId: audit.id }, { jobId: audit.id });
+    try {
+      await auditQueue.add('audit:create', { auditId: audit.id }, { jobId: audit.id });
+    } catch (error) {
+      await entitlementService.releaseUsage(request.auth!.organizationId, 'AUDITS');
+      await db.audit
+        .update({ where: { id: audit.id }, data: { status: 'CANCELLED' } })
+        .catch(() => {});
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'api',
+          event: 'audit_enqueue_failed',
+          auditId: audit.id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
+      );
+      return response.status(503).json({
+        success: false,
+        error: {
+          code: 'QUEUE_UNAVAILABLE',
+          message: 'Audit processing queue is temporarily unavailable. Please retry.',
+          requestId: requestId(request),
+        },
+      });
+    }
     response.status(202).json({ success: true, data: audit });
   } catch (error) {
     next(error);
@@ -1134,7 +1165,7 @@ apiRouter.get('/audits/:id', requirePermission('AUDIT_VIEW'), async (request: Au
       include: {
         website: true,
         score: true,
-        findings: { orderBy: { severity: 'asc' } },
+        findings: { orderBy: { severity: 'asc' }, take: 500 },
       },
     });
     if (!audit) {
@@ -1248,6 +1279,7 @@ apiRouter.get('/audits/:id/pages', requirePermission('AUDIT_VIEW'), async (reque
     const pages = await db.auditPage.findMany({
       where: { auditId: audit.id },
       orderBy: { depth: 'asc' },
+      take: 500,
     });
 
     response.json({ success: true, data: pages });
@@ -2052,7 +2084,7 @@ apiRouter.post('/webhooks/:id/ping', requirePermission('WEBHOOK_MANAGE'), async 
 // PHASE 8: ADMIN PLATFORM
 // ==========================================
 
-apiRouter.get('/admin/metrics', requirePermission('ADMIN_DASHBOARD_VIEW'), async (_request: AuthRequest, response, next) => {
+apiRouter.get('/admin/metrics', requirePlatformAdmin(), async (_request: AuthRequest, response, next) => {
   try {
     const metrics = await adminService.getAdminMetrics();
     response.json({ success: true, data: metrics });
@@ -2061,7 +2093,7 @@ apiRouter.get('/admin/metrics', requirePermission('ADMIN_DASHBOARD_VIEW'), async
   }
 });
 
-apiRouter.get('/admin/users', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/users', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
@@ -2073,7 +2105,7 @@ apiRouter.get('/admin/users', requirePermission('USER_MANAGE'), async (request: 
   }
 });
 
-apiRouter.patch('/admin/users/:id/status', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+apiRouter.patch('/admin/users/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const { disabled, reason } = request.body;
     const ip = getClientIp(request);
@@ -2084,7 +2116,7 @@ apiRouter.patch('/admin/users/:id/status', requirePermission('USER_MANAGE'), asy
   }
 });
 
-apiRouter.post('/admin/users/:id/revoke-sessions', requirePermission('USER_MANAGE'), async (request: AuthRequest, response, next) => {
+apiRouter.post('/admin/users/:id/revoke-sessions', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const ip = getClientIp(request);
     const count = await adminService.revokeUserSessions(request.auth!.sub, request.params.id, ip);
@@ -2094,7 +2126,7 @@ apiRouter.post('/admin/users/:id/revoke-sessions', requirePermission('USER_MANAG
   }
 });
 
-apiRouter.get('/admin/organizations', requirePermission('ORG_MANAGE'), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/organizations', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
@@ -2106,7 +2138,7 @@ apiRouter.get('/admin/organizations', requirePermission('ORG_MANAGE'), async (re
   }
 });
 
-apiRouter.patch('/admin/organizations/:id/status', requirePermission('ORG_MANAGE'), async (request: AuthRequest, response, next) => {
+apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const { suspended, reason } = request.body;
     const ip = getClientIp(request);
@@ -2117,7 +2149,7 @@ apiRouter.patch('/admin/organizations/:id/status', requirePermission('ORG_MANAGE
   }
 });
 
-apiRouter.get('/admin/audit-logs', requirePermission('SECURITY_AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/audit-logs', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
@@ -2129,7 +2161,7 @@ apiRouter.get('/admin/audit-logs', requirePermission('SECURITY_AUDIT_VIEW'), asy
   }
 });
 
-apiRouter.get('/admin/express-fix', requirePermission('ADMIN_DASHBOARD_VIEW'), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/express-fix', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
@@ -2141,7 +2173,7 @@ apiRouter.get('/admin/express-fix', requirePermission('ADMIN_DASHBOARD_VIEW'), a
   }
 });
 
-apiRouter.get('/admin/express-fix/stats', requirePermission('ADMIN_DASHBOARD_VIEW'), async (_request: AuthRequest, response, next) => {
+apiRouter.get('/admin/express-fix/stats', requirePlatformAdmin(), async (_request: AuthRequest, response, next) => {
   try {
     const result = await adminService.getExpressFixQueueStats();
     response.json({ success: true, data: result });
@@ -2150,7 +2182,7 @@ apiRouter.get('/admin/express-fix/stats', requirePermission('ADMIN_DASHBOARD_VIE
   }
 });
 
-apiRouter.patch('/admin/express-fix/:id/status', requirePermission('ADMIN_DASHBOARD_VIEW'), async (request: AuthRequest, response, next) => {
+apiRouter.patch('/admin/express-fix/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const { status, notes } = request.body;
     const ip = getClientIp(request);

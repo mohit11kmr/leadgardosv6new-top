@@ -1,11 +1,10 @@
 import { db } from '@leadguard/database';
-import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { entitlementService } from './entitlementService.js';
+import { monitoringQueue } from '../queue.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-const monitoringQueue = new Queue('monitoring', { connection });
 
 const PLAN_MONITOR_LIMITS: Record<string, number> = {
   FREE: 0,
@@ -145,6 +144,8 @@ export class MonitoringService {
         },
         alerts: {
           where: { status: 'OPEN' },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -271,7 +272,7 @@ export class MonitoringService {
 
     const runs = await db.monitoringRun.findMany({
       where: { monitoringConfigId: monitorId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
@@ -292,7 +293,7 @@ export class MonitoringService {
 
     const findings = await db.monitoringFinding.findMany({
       where: { monitoringConfigId: monitorId },
-      orderBy: { detectedAt: 'desc' },
+      orderBy: [{ detectedAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
@@ -313,7 +314,7 @@ export class MonitoringService {
 
     const alerts = await db.monitoringAlert.findMany({
       where: { monitoringConfigId: monitorId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });

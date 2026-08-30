@@ -276,7 +276,7 @@ export class ReportService {
             cursor: { id: options.cursor },
           }
         : {}),
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
         title: true,

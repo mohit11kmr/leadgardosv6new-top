@@ -80,6 +80,34 @@ export function hasPermission(role: RoleType, capability: Capability): boolean {
   return allowedRoles ? allowedRoles.includes(role) : false;
 }
 
+export function requirePlatformAdmin() {
+  return async (request: AuthRequest, response: Response, next: NextFunction) => {
+    if (!request.auth) {
+      return response.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHENTICATED', message: 'Authentication required' },
+      });
+    }
+
+    const user = await db.user.findUnique({
+      where: { id: request.auth.sub },
+      select: { id: true, platformAdmin: true, isDisabled: true },
+    });
+
+    if (!user || user.isDisabled || !user.platformAdmin) {
+      return response.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Platform administrator access required',
+        },
+      });
+    }
+
+    next();
+  };
+}
+
 export function requirePermission(capability: Capability) {
   return async (request: AuthRequest, response: Response, next: NextFunction) => {
     if (!request.auth) {

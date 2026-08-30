@@ -36,16 +36,30 @@ export class LeadService {
       return existing;
     }
 
-    return db.expressFixLead.create({
-      data: {
-        organizationId: input.organizationId,
-        websiteId: input.websiteId,
-        auditId: input.auditId,
-        email: input.email.toLowerCase(),
-        name: input.name || null,
-        source: input.source || 'GUEST_CHECKOUT',
-      },
-    });
+    try {
+      return await db.expressFixLead.create({
+        data: {
+          organizationId: input.organizationId,
+          websiteId: input.websiteId,
+          auditId: input.auditId,
+          email: input.email.toLowerCase(),
+          name: input.name || null,
+          source: input.source || 'GUEST_CHECKOUT',
+        },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') {
+        throw error;
+      }
+      return db.expressFixLead.findUniqueOrThrow({
+        where: {
+          email_auditId: {
+            email: input.email.toLowerCase(),
+            auditId: input.auditId,
+          },
+        },
+      });
+    }
   }
 
   /**

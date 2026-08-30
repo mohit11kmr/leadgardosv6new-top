@@ -137,6 +137,7 @@ model User {
   locale                  String?                  @default("en")
   isDisabled              Boolean                  @default(false)
   disabledReason          String?
+  platformAdmin           Boolean                  @default(false)
   emailVerifiedAt         DateTime?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -410,6 +411,7 @@ model AuditFinding {
   @@index([auditId, scope])
   @@index([auditId, category])
   @@index([auditId, normalizedIssueKey])
+  @@index([auditId, scoreImpact])
 }
 
 model AuditScore {
@@ -745,6 +747,7 @@ model BillingEvent {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, createdAt])
+  @@index([providerEventId])
 }
 
 model UsageRecord {

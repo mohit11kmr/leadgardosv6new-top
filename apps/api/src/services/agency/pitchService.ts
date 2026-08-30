@@ -452,8 +452,14 @@ export class PitchService {
       }));
 
       const leadScore = prospect.leadScore ?? prospect.audit?.score?.overall ?? 70;
-      const criticalCount = prospect.criticalFindings || verifiedFindings.filter((f) => f.severity === 'CRITICAL').length;
-      const highCount = prospect.highFindings || verifiedFindings.filter((f) => f.severity === 'HIGH').length;
+      const criticalCount =
+        prospect.criticalFindings !== null && prospect.criticalFindings !== undefined
+          ? prospect.criticalFindings
+          : verifiedFindings.filter((f) => f.severity === 'CRITICAL').length;
+      const highCount =
+        prospect.highFindings !== null && prospect.highFindings !== undefined
+          ? prospect.highFindings
+          : verifiedFindings.filter((f) => f.severity === 'HIGH').length;
 
       const context: GroundedPitchContext = {
         domain: prospect.domain,
@@ -477,56 +483,79 @@ export class PitchService {
 
       const result = await provider.generatePitch(context);
 
-      // Atomic Version Allocation in a Database Transaction to prevent race conditions
-      const pitch = await db.$transaction(async (tx) => {
-        const latestPitch = await tx.pitch.findFirst({
-          where: { prospectId, organizationId },
-          orderBy: { version: 'desc' },
-          select: { version: true },
-        });
-        const nextVersion = (latestPitch?.version ?? 0) + 1;
+      // Atomic version allocation + status transitions in a single transaction.
+      // Concurrent generations for the same prospect can race on the
+      // @@unique([prospectId, version]) constraint; retry with the already
+      // generated content so the loser re-allocates a fresh version instead
+      // of failing the job.
+      let pitch;
+      let serializeError: unknown;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          pitch = await db.$transaction(async (tx) => {
+            const latestPitch = await tx.pitch.findFirst({
+              where: { prospectId, organizationId },
+              orderBy: { version: 'desc' },
+              select: { version: true },
+            });
+            const nextVersion = (latestPitch?.version ?? 0) + 1;
 
-        return tx.pitch.create({
-          data: {
-            prospectId,
-            organizationId,
-            version: nextVersion,
-            generationType: result.generationType,
-            provider: result.provider,
-            model: result.model,
-            promptVersion: 'v1',
-            language: language || 'en',
-            tone: tone || 'PROFESSIONAL',
-            subject: result.subject,
-            opening: result.opening,
-            problem: result.problem,
-            businessImpact: result.businessImpact,
-            recommendation: result.recommendation,
-            callToAction: result.callToAction,
-            content: result.content,
-            claimReferences: result.claimReferences as object,
-            tokensUsed: result.tokensUsed,
-            estimatedCost: result.estimatedCost,
-          },
-        });
-      });
+            const created = await tx.pitch.create({
+              data: {
+                prospectId,
+                organizationId,
+                version: nextVersion,
+                generationType: result.generationType,
+                provider: result.provider,
+                model: result.model,
+                promptVersion: 'v1',
+                language: language || 'en',
+                tone: tone || 'PROFESSIONAL',
+                subject: result.subject,
+                opening: result.opening,
+                problem: result.problem,
+                businessImpact: result.businessImpact,
+                recommendation: result.recommendation,
+                callToAction: result.callToAction,
+                content: result.content,
+                claimReferences: result.claimReferences as object,
+                tokensUsed: result.tokensUsed,
+                estimatedCost: result.estimatedCost,
+              },
+            });
 
-      await db.prospect.update({
-        where: { id: prospectId },
-        data: { status: 'QUALIFIED' },
-      });
+            await tx.prospect.update({
+              where: { id: prospectId },
+              data: { status: 'QUALIFIED' },
+            });
 
-      await db.pitchGeneration.update({
-        where: { id: generationId },
-        data: {
-          status: 'COMPLETED',
-          pitchId: pitch.id,
-          tokensUsed: result.tokensUsed,
-          estimatedCost: result.estimatedCost,
-        },
-      });
+            await tx.pitchGeneration.update({
+              where: { id: generationId },
+              data: {
+                status: 'COMPLETED',
+                pitchId: created.id,
+                tokensUsed: result.tokensUsed,
+                estimatedCost: result.estimatedCost,
+              },
+            });
 
-      return { status: 'COMPLETED', pitchId: pitch.id };
+            return created;
+          });
+          break;
+        } catch (err) {
+          if (attempt < 2 && (err as { code?: string }).code === 'P2002') {
+            serializeError = err;
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!pitch) {
+        throw serializeError ?? new Error('Pitch serialization failed');
+      }
+
+      return { status: 'COMPLETED', pitchId: pitch!.id };
     } catch (err: any) {
       await db.pitchGeneration.update({
         where: { id: generationId },
@@ -543,6 +572,7 @@ export class PitchService {
     return db.pitch.findMany({
       where: { prospectId, organizationId },
       orderBy: { version: 'desc' },
+      take: 200,
     });
   }
 }
