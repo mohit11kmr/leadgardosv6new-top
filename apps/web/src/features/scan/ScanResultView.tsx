@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiClient } from '../../api/client.js';
 import { IconShield, IconTrendingUp, IconTarget, IconSearch, IconArrowRight, IconExternalLink, IconLock, IconAlertCircle, IconCheckCircle, IconXCircle, IconHelpCircle, IconCreditCard, IconMail, IconPhone, IconGlobe } from '../../components/ui/Icons.js';
+import { normalizeFindingEvidence, type FindingEvidence } from '@leadguard/shared';
 
 interface ScanResult {
   id: string;
@@ -29,7 +30,7 @@ interface ScanResult {
     recommendation: string;
     businessImpact?: string | null;
     affectedUrl?: string;
-    evidence?: Record<string, unknown> | null;
+    evidence?: FindingEvidence | null;
     normalizedIssueKey?: string;
   }> | undefined;
   totalFindings: number;
@@ -340,14 +341,34 @@ export function ScanResultView() {
                         </div>
                       )}
 
-                      {finding.evidence && (
-                        <details style={{ marginBottom: '12px' }}>
-                          <summary style={{ fontSize: '12px', color: '#94a3b8', cursor: 'pointer', fontWeight: '500' }}>View Technical Evidence</summary>
-                          <pre style={{ marginTop: '8px', fontSize: '11px', color: '#64748b', background: '#1e293b', padding: '12px', borderRadius: '6px', overflow: 'auto', fontFamily: 'monospace' }}>
-                            {JSON.stringify(finding.evidence, null, 2)}
-                          </pre>
-                        </details>
-                      )}
+                      {(() => {
+                        const normalized = normalizeFindingEvidence(finding.evidence);
+                        const hasEvidence = normalized !== null && (
+                          (typeof normalized === 'object' && !Array.isArray(normalized) && Object.keys(normalized).length > 0) ||
+                          (Array.isArray(normalized) && normalized.length > 0) ||
+                          (typeof normalized === 'string' && normalized.trim().length > 0) ||
+                          typeof normalized === 'number' ||
+                          typeof normalized === 'boolean'
+                        );
+                        if (!hasEvidence || normalized === null) return null;
+
+                        return (
+                          <details style={{ marginBottom: '12px' }}>
+                            <summary style={{ fontSize: '12px', color: '#94a3b8', cursor: 'pointer', fontWeight: '500' }}>View Technical Evidence</summary>
+                            <div style={{ marginTop: '8px', fontSize: '11px', color: '#cbd5e1', background: '#1e293b', padding: '12px', borderRadius: '6px', overflow: 'auto', fontFamily: 'monospace' }}>
+                              {typeof normalized === 'string' ? (
+                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{normalized}</pre>
+                              ) : typeof normalized === 'number' || typeof normalized === 'boolean' ? (
+                                <span>{String(normalized)}</span>
+                              ) : (
+                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                                  {JSON.stringify(normalized, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          </details>
+                        );
+                      })()}
 
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '12px', background: '#131c31', borderRadius: '8px', border: '1px solid #1e293b' }}>
                         <IconShield size={16} color="#10b981" style={{ flexShrink: 0, marginTop: '1px' }} />

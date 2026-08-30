@@ -1,4 +1,5 @@
 import { apiClient } from './client.js';
+import type { FindingEvidence } from '@leadguard/shared';
 
 export interface Score {
   overall: number;
@@ -8,15 +9,7 @@ export interface Score {
   security: number;
 }
 
-export interface FindingEvidence {
-  source?: string;
-  observed?: string;
-  location?: string;
-  why?: string;
-  recommendation?: string;
-  metadata?: Record<string, unknown>;
-  value?: string;
-}
+export type { FindingEvidence };
 
 export interface Finding {
   id: string;

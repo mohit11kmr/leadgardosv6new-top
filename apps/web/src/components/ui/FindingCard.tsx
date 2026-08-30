@@ -1,19 +1,7 @@
 import React, { useState } from 'react';
 import { Badge } from './Badge.js';
 import { IconAlertTriangle, IconAlertCircle, IconInfo, IconExternalLink, IconChevronDown, IconChevronUp, IconCheck } from './Icons.js';
-
-export interface FindingEvidenceData {
-  source?: string | null;
-  observed?: string | null;
-  location?: string | null;
-  why?: string | null;
-  recommendation?: string | null;
-  element?: string | null;
-  expectedPattern?: string | null;
-  ruleId?: string | null;
-  value?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
+import { normalizeFindingEvidence, type FindingEvidence, type JsonValue } from '@leadguard/shared';
 
 export interface FindingCardProps {
   finding: {
@@ -26,7 +14,7 @@ export interface FindingCardProps {
     recommendation?: string;
     businessImpact?: string | null;
     scoreImpact?: number;
-    evidence?: FindingEvidenceData | null;
+    evidence?: FindingEvidence | null;
   };
   rank?: number;
   onExpressFixClick?: () => void;
@@ -55,12 +43,14 @@ export function FindingCard({ finding, rank, onExpressFixClick }: FindingCardPro
     <IconInfo size={16} color="var(--primary)" />
   );
 
-  const hasEvidence = !!(
-    finding.evidence?.observed ||
-    finding.evidence?.location ||
-    finding.evidence?.why ||
-    finding.evidence?.element ||
-    finding.evidence?.ruleId
+  const normalizedEvidence = normalizeFindingEvidence(finding.evidence);
+
+  const hasEvidence = normalizedEvidence !== null && (
+    (typeof normalizedEvidence === 'object' && !Array.isArray(normalizedEvidence) && Object.keys(normalizedEvidence).length > 0) ||
+    (Array.isArray(normalizedEvidence) && normalizedEvidence.length > 0) ||
+    (typeof normalizedEvidence === 'string' && normalizedEvidence.trim().length > 0) ||
+    typeof normalizedEvidence === 'number' ||
+    typeof normalizedEvidence === 'boolean'
   );
 
   const handleCopyFix = () => {
@@ -199,7 +189,7 @@ export function FindingCard({ finding, rank, onExpressFixClick }: FindingCardPro
           )}
         </div>
 
-        {hasEvidence && (
+        {hasEvidence && normalizedEvidence !== null && (
           <div style={{ marginTop: '8px' }}>
             <button
               type="button"
@@ -238,35 +228,104 @@ export function FindingCard({ finding, rank, onExpressFixClick }: FindingCardPro
                   gap: '4px',
                 }}
               >
-                {finding.evidence?.ruleId && (
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Rule ID: </span>
-                    <span style={{ color: 'var(--text-primary)' }}>{finding.evidence.ruleId}</span>
-                  </div>
-                )}
-                {finding.evidence?.location && (
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Location: </span>
-                    <span>{finding.evidence.location}</span>
-                  </div>
-                )}
-                {finding.evidence?.observed && (
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Observed: </span>
-                    <span style={{ color: 'var(--danger)' }}>{finding.evidence.observed}</span>
-                  </div>
-                )}
-                {finding.evidence?.why && (
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Reason: </span>
-                    <span>{finding.evidence.why}</span>
-                  </div>
-                )}
+                {renderEvidenceContent(normalizedEvidence)}
               </div>
             )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function renderEvidenceContent(evidence: JsonValue) {
+  if (evidence === null || evidence === undefined) {
+    return <span style={{ color: 'var(--text-muted)' }}>No technical evidence recorded.</span>;
+  }
+
+  if (typeof evidence === 'string') {
+    return <div><span>{evidence}</span></div>;
+  }
+
+  if (typeof evidence === 'number' || typeof evidence === 'boolean') {
+    return <div><span>{String(evidence)}</span></div>;
+  }
+
+  if (Array.isArray(evidence)) {
+    if (evidence.length === 0) {
+      return <span style={{ color: 'var(--text-muted)' }}>No technical evidence items recorded.</span>;
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {evidence.map((item, idx) => (
+          <div key={idx} style={{ padding: '6px 8px', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+            {item !== null && typeof item === 'object' ? (
+              Array.isArray(item) ? (
+                <pre style={{ margin: 0, fontSize: '11px', whiteSpace: 'pre-wrap' }}>{JSON.stringify(item, null, 2)}</pre>
+              ) : (
+                renderObjectEntries(item as Record<string, JsonValue | undefined>)
+              )
+            ) : (
+              <span>{String(item)}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof evidence === 'object') {
+    return renderObjectEntries(evidence as Record<string, JsonValue | undefined>);
+  }
+
+  return <span style={{ color: 'var(--text-muted)' }}>No technical evidence recorded.</span>;
+}
+
+function renderObjectEntries(obj: Record<string, JsonValue | undefined>) {
+  const knownKeys = ['ruleId', 'location', 'observed', 'why', 'source', 'recommendation', 'element', 'expectedPattern', 'value'];
+  const entries = Object.entries(obj).filter(([_, v]) => v !== undefined && v !== null && v !== '');
+
+  if (entries.length === 0) {
+    return <span style={{ color: 'var(--text-muted)' }}>No diagnostic fields recorded.</span>;
+  }
+
+  const knownMap: Record<string, string> = {
+    ruleId: 'Rule ID',
+    location: 'Location',
+    observed: 'Observed',
+    why: 'Reason',
+    source: 'Source',
+    element: 'Element',
+    expectedPattern: 'Expected',
+    value: 'Value',
+    recommendation: 'Evidence Fix',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {knownKeys.map((key) => {
+        const val = obj[key];
+        if (val === undefined || val === null || val === '') return null;
+        const isObserved = key === 'observed';
+        const isRuleOrElement = key === 'ruleId' || key === 'element';
+        return (
+          <div key={key}>
+            <span style={{ color: 'var(--text-muted)' }}>{knownMap[key] || key}: </span>
+            <span style={{ color: isObserved ? 'var(--danger)' : isRuleOrElement ? 'var(--text-primary)' : 'inherit' }}>
+              {typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val)}
+            </span>
+          </div>
+        );
+      })}
+
+      {entries
+        .filter(([k]) => !knownKeys.includes(k) && k !== 'metadata')
+        .map(([k, v]) => (
+          <div key={k}>
+            <span style={{ color: 'var(--text-muted)' }}>{k}: </span>
+            <span>{typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}</span>
+          </div>
+        ))}
     </div>
   );
 }

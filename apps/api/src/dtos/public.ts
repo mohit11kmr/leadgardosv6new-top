@@ -18,7 +18,9 @@ export interface PublicAuditScoreDTO {
   security: number;
 }
 
-export type FindingEvidence = Record<string, unknown> | string | null;
+import type { JsonPrimitive, JsonValue, FindingEvidence } from '@leadguard/shared';
+
+export type { JsonPrimitive, JsonValue, FindingEvidence };
 
 export interface PublicAuditFindingDTO {
   id: string;

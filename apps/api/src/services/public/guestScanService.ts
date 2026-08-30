@@ -3,6 +3,7 @@ import {
   validateExternalUrl,
   normalizeUrl,
   getClientIp,
+  sanitizeFindingEvidence,
 } from '@leadguard/shared';
 import { auditQueue } from '../../queue.js';
 import { redisClient } from '../../middleware/rateLimiters.js';
@@ -277,30 +278,8 @@ export class GuestScanService {
     };
   }
 
-  private sanitizeEvidence(evidence: any): any {
-    if (!evidence || typeof evidence !== 'object') {
-      return evidence;
-    }
-    const sanitized = { ...evidence };
-    // Remove potentially sensitive fields
-    delete sanitized.headers;
-    delete sanitized.cookies;
-    delete sanitized.authorization;
-    delete sanitized.token;
-    delete sanitized.secret;
-    delete sanitized.password;
-    delete sanitized.key;
-    delete sanitized.signature;
-    delete sanitized.rawBody;
-    delete sanitized.requestBody;
-    delete sanitized.responseBody;
-    // Recursively sanitize nested objects
-    for (const key of Object.keys(sanitized)) {
-      if (sanitized[key] && typeof sanitized[key] === 'object') {
-        sanitized[key] = this.sanitizeEvidence(sanitized[key]);
-      }
-    }
-    return sanitized;
+  private sanitizeEvidence(evidence: unknown) {
+    return sanitizeFindingEvidence(evidence);
   }
 
   private formatPublicAuditDto(audit: any): PublicAuditDTO {
@@ -332,7 +311,7 @@ export class GuestScanService {
             scoreImpact: f.scoreImpact,
             recommendation: f.recommendation,
             businessImpact: f.businessImpact || null,
-            affectedUrl: f.affectedUrl,
+            affectedUrl: f.affectedUrl || null,
             evidence: this.sanitizeEvidence(f.evidence),
             normalizedIssueKey: f.normalizedIssueKey,
           }))

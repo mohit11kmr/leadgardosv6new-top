@@ -5,6 +5,7 @@ import {
   decodeCursor,
   encodeCursor,
   buildCursorWhereClause,
+  sanitizeFindingEvidence,
 } from '@leadguard/shared';
 import { auditQueue } from '../../queue.js';
 import type { PublicAuditDTO, PaginatedResult } from '../../dtos/public.js';
@@ -207,28 +208,8 @@ export class PublicAuditService {
     return this.formatAuditDto(audit);
   }
 
-  private sanitizeEvidence(evidence: any): any {
-    if (!evidence || typeof evidence !== 'object') {
-      return evidence;
-    }
-    const sanitized = { ...evidence };
-    delete sanitized.headers;
-    delete sanitized.cookies;
-    delete sanitized.authorization;
-    delete sanitized.token;
-    delete sanitized.secret;
-    delete sanitized.password;
-    delete sanitized.key;
-    delete sanitized.signature;
-    delete sanitized.rawBody;
-    delete sanitized.requestBody;
-    delete sanitized.responseBody;
-    for (const key of Object.keys(sanitized)) {
-      if (sanitized[key] && typeof sanitized[key] === 'object') {
-        sanitized[key] = this.sanitizeEvidence(sanitized[key]);
-      }
-    }
-    return sanitized;
+  private sanitizeEvidence(evidence: unknown) {
+    return sanitizeFindingEvidence(evidence);
   }
 
   private formatAuditDto(audit: any): PublicAuditDTO {

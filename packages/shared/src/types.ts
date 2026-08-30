@@ -10,7 +10,9 @@ export type FindingCategory = (typeof findingCategories)[number];
 export const findingScopes = ['PAGE', 'WEBSITE', 'AUDIT'] as const;
 export type FindingScope = (typeof findingScopes)[number];
 
-export interface FindingEvidence {
+import type { FindingEvidence } from './evidence.js';
+
+export interface StructuredFindingEvidence {
   source: string;
   observed: string;
   location: string;
@@ -29,7 +31,7 @@ export interface Finding {
   severity: Severity;
   title: string;
   description: string;
-  evidence: FindingEvidence;
+  evidence: StructuredFindingEvidence;
   affectedUrl?: string;
   recommendation: string;
   scoreImpact: number;

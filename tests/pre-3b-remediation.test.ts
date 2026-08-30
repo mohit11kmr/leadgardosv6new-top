@@ -4,6 +4,9 @@ import path from 'node:path';
 import { z } from 'zod';
 import { FUNNEL_EVENTS } from '../apps/api/src/services/funnelEventService.js';
 import type { PublicAuditFindingDTO, FindingEvidence } from '../apps/api/src/dtos/public.js';
+import { sanitizeFindingEvidence, normalizeFindingEvidence } from '@leadguard/shared';
+import { publicAuditService } from '../apps/api/src/services/public/publicAuditService.js';
+import { guestScanService } from '../apps/api/src/services/public/guestScanService.js';
 
 describe('Phase 3A.6 Pre-3B Blocker Remediations', () => {
   const rootDir = process.cwd();
@@ -66,42 +69,228 @@ describe('Phase 3A.6 Pre-3B Blocker Remediations', () => {
     });
   });
 
-  describe('F5 — Evidence DTO Contract & Producer Alignment', () => {
-    it('verifies PublicAuditFindingDTO declares evidence as FindingEvidence object/null', () => {
-      const sampleFinding: PublicAuditFindingDTO = {
-        id: 'f-1',
-        title: 'Broken WhatsApp Link',
-        description: 'WhatsApp link is missing country code',
-        category: 'LEAD',
-        severity: 'CRITICAL',
-        scoreImpact: 25,
-        recommendation: 'Update link format',
-        businessImpact: 'Lost WhatsApp inquiries',
-        affectedUrl: 'https://example.com/contact',
-        evidence: {
-          element: '<a href="whatsapp://send?phone=">',
-          ruleId: 'LG-001',
-          observed: 'Missing country prefix',
-        },
-        normalizedIssueKey: 'whatsapp_invalid_format',
-      };
-
-      expect(typeof sampleFinding.evidence).toBe('object');
-      expect((sampleFinding.evidence as any)?.ruleId).toBe('LG-001');
+  describe('F5 — Canonical Evidence Contract, Sanitization, & Normalization', () => {
+    describe('A. Primitive Evidence', () => {
+      it('preserves string, number, boolean, and null primitives', () => {
+        expect(sanitizeFindingEvidence('plain string evidence')).toBe('plain string evidence');
+        expect(sanitizeFindingEvidence(42)).toBe(42);
+        expect(sanitizeFindingEvidence(0)).toBe(0);
+        expect(sanitizeFindingEvidence(true)).toBe(true);
+        expect(sanitizeFindingEvidence(false)).toBe(false);
+        expect(sanitizeFindingEvidence(null)).toBe(null);
+        expect(sanitizeFindingEvidence(undefined)).toBe(null);
+      });
     });
 
-    it('verifies both guestScanService and publicAuditService include evidence, businessImpact, affectedUrl, and normalizedIssueKey', () => {
-      const guestScanServicePath = path.join(rootDir, 'apps/api/src/services/public/guestScanService.ts');
-      const publicAuditServicePath = path.join(rootDir, 'apps/api/src/services/public/publicAuditService.ts');
+    describe('B. Object Evidence', () => {
+      it('preserves clean nested objects and creates new copies without mutating input', () => {
+        const input = {
+          ruleId: 'LG-001',
+          location: 'https://example.com/page',
+          details: {
+            subCode: 104,
+            active: true,
+          },
+        };
+        const sanitized = sanitizeFindingEvidence(input);
+        expect(sanitized).toEqual({
+          ruleId: 'LG-001',
+          location: 'https://example.com/page',
+          details: {
+            subCode: 104,
+            active: true,
+          },
+        });
+        expect(sanitized).not.toBe(input);
+      });
+    });
 
-      const guestContent = fs.readFileSync(guestScanServicePath, 'utf-8');
-      const publicContent = fs.readFileSync(publicAuditServicePath, 'utf-8');
+    describe('C. Array Evidence', () => {
+      it('preserves array of primitives without converting arrays into objects', () => {
+        const input = ['https://example.com/1', 'https://example.com/2', 123, true, null];
+        const sanitized = sanitizeFindingEvidence(input);
+        expect(Array.isArray(sanitized)).toBe(true);
+        expect(sanitized).toEqual(['https://example.com/1', 'https://example.com/2', 123, true, null]);
+      });
 
-      expect(guestContent).toContain('evidence: this.sanitizeEvidence(f.evidence)');
-      expect(publicContent).toContain('evidence: this.sanitizeEvidence(f.evidence)');
-      expect(publicContent).toContain('businessImpact: f.businessImpact || null');
-      expect(publicContent).toContain('affectedUrl: f.affectedUrl || null');
-      expect(publicContent).toContain('normalizedIssueKey: f.normalizedIssueKey');
+      it('preserves array of objects and preserves exact ordering', () => {
+        const input = [
+          { index: 0, tag: 'script1' },
+          { index: 1, tag: 'script2' },
+          { index: 2, tag: 'script3' },
+        ];
+        const sanitized = sanitizeFindingEvidence(input);
+        expect(Array.isArray(sanitized)).toBe(true);
+        expect(sanitized).toEqual([
+          { index: 0, tag: 'script1' },
+          { index: 1, tag: 'script2' },
+          { index: 2, tag: 'script3' },
+        ]);
+      });
+    });
+
+    describe('D. Mixed Nested JSON', () => {
+      it('handles objects containing arrays, arrays containing objects, and arrays containing arrays', () => {
+        const input = {
+          auditTarget: 'example.com',
+          pages: [
+            {
+              url: '/home',
+              issues: [
+                { type: 'missing_alt', elements: ['<img 1>', '<img 2>'] },
+                { matrix: [[1, 2], [3, 4]] },
+              ],
+            },
+          ],
+        };
+        const sanitized = sanitizeFindingEvidence(input);
+        expect(sanitized).toEqual({
+          auditTarget: 'example.com',
+          pages: [
+            {
+              url: '/home',
+              issues: [
+                { type: 'missing_alt', elements: ['<img 1>', '<img 2>'] },
+                { matrix: [[1, 2], [3, 4]] },
+              ],
+            },
+          ],
+        });
+        // Ensure array identities are preserved
+        expect(Array.isArray((sanitized as any).pages)).toBe(true);
+        expect(Array.isArray((sanitized as any).pages[0].issues)).toBe(true);
+        expect(Array.isArray((sanitized as any).pages[0].issues[0].elements)).toBe(true);
+        expect(Array.isArray((sanitized as any).pages[0].issues[1].matrix[0])).toBe(true);
+      });
+    });
+
+    describe('E. Sensitive Field Removal', () => {
+      it('strips all 11 forbidden keys at top-level, nested objects, and nested inside arrays', () => {
+        const input = {
+          safeField: 'visible',
+          headers: { 'user-agent': 'bot' },
+          cookies: 'session=123',
+          authorization: 'Bearer xyz',
+          token: 'tok_abc',
+          secret: 'shh',
+          password: 'pass',
+          key: 'api_key',
+          signature: 'sig_123',
+          rawBody: '<xml>',
+          requestBody: { query: 'test' },
+          responseBody: { result: 'fail' },
+          nested: {
+            safeNested: 100,
+            token: 'leak_nested',
+            subArray: [
+              {
+                safeInArray: true,
+                password: 'leak_in_array',
+                headers: 'leak_header',
+              },
+            ],
+          },
+        };
+
+        const sanitized = sanitizeFindingEvidence(input);
+        expect(sanitized).toEqual({
+          safeField: 'visible',
+          nested: {
+            safeNested: 100,
+            subArray: [
+              {
+                safeInArray: true,
+              },
+            ],
+          },
+        });
+      });
+    });
+
+    describe('F. DTO Producer Consistency', () => {
+      it('verifies publicAuditService and guestScanService produce identical canonical finding shapes', () => {
+        const mockAudit = {
+          id: 'audit-123',
+          website: {
+            id: 'web-123',
+            name: 'Example Site',
+            url: 'https://example.com',
+            domain: 'example.com',
+          },
+          status: 'COMPLETED',
+          score: {
+            overall: 80,
+            lead: 75,
+            advertising: 85,
+            seo: 90,
+            security: 70,
+          },
+          findings: [
+            {
+              id: 'f-1',
+              title: 'Broken WhatsApp Link',
+              description: 'WhatsApp link is missing country code prefix',
+              category: 'LEAD',
+              severity: 'CRITICAL',
+              scoreImpact: 25,
+              recommendation: 'Use international phone format',
+              businessImpact: 'Lost lead inquiries',
+              affectedUrl: 'https://example.com/contact',
+              evidence: [
+                { element: '<a href="whatsapp://send?phone=">', ruleId: 'LG-001' },
+                { token: 'secret_leak', observed: 'Missing country code' },
+              ],
+              normalizedIssueKey: 'whatsapp_invalid_format',
+            },
+          ],
+          totalFindings: 1,
+          createdAt: new Date('2026-08-30T10:00:00.000Z'),
+        };
+
+        const publicResult = (publicAuditService as any).formatAuditDto(mockAudit);
+        const guestResult = (guestScanService as any).formatPublicAuditDto(mockAudit);
+
+        expect(publicResult.findings).toBeDefined();
+        expect(guestResult.findings).toBeDefined();
+        expect(publicResult.findings).toEqual(guestResult.findings);
+
+        // Check canonical finding keys
+        const expectedFinding = {
+          id: 'f-1',
+          title: 'Broken WhatsApp Link',
+          description: 'WhatsApp link is missing country code prefix',
+          category: 'LEAD',
+          severity: 'CRITICAL',
+          scoreImpact: 25,
+          recommendation: 'Use international phone format',
+          businessImpact: 'Lost lead inquiries',
+          affectedUrl: 'https://example.com/contact',
+          evidence: [
+            { element: '<a href="whatsapp://send?phone=">', ruleId: 'LG-001' },
+            { observed: 'Missing country code' }, // token was stripped
+          ],
+          normalizedIssueKey: 'whatsapp_invalid_format',
+        };
+
+        expect(publicResult.findings[0]).toEqual(expectedFinding);
+        expect(guestResult.findings[0]).toEqual(expectedFinding);
+      });
+    });
+
+    describe('G. Frontend Evidence Normalization Guard', () => {
+      it('safely normalizes objects, arrays, primitives, and unexpected values without throwing', () => {
+        expect(normalizeFindingEvidence(null)).toBe(null);
+        expect(normalizeFindingEvidence(undefined)).toBe(null);
+        expect(normalizeFindingEvidence('valid string')).toBe('valid string');
+        expect(normalizeFindingEvidence(123.45)).toBe(123.45);
+        expect(normalizeFindingEvidence(true)).toBe(true);
+        expect(normalizeFindingEvidence([1, 2, 'three'])).toEqual([1, 2, 'three']);
+        expect(normalizeFindingEvidence({ a: 1, b: [true, false] })).toEqual({ a: 1, b: [true, false] });
+        
+        // Edge cases
+        expect(normalizeFindingEvidence(BigInt(100))).toBe('100');
+        expect(normalizeFindingEvidence(() => {})).toBeDefined();
+      });
     });
   });
 
