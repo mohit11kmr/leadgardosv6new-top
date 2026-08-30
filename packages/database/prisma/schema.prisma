@@ -39,6 +39,14 @@ enum FindingScope {
   AUDIT
 }
 
+enum VaultAuditStatus {
+  OPEN
+  TRIAGED
+  FIXED
+  VERIFIED
+  VERIFIED_IGNORED
+}
+
 enum SubscriptionStatus {
   CREATED
   TRIALING
@@ -217,43 +225,43 @@ model SecurityEvent {
 }
 
 model Organization {
-  id                    String                 @id @default(uuid())
-  name                  String
-  slug                  String                 @unique
-  isSuspended           Boolean                @default(false)
-  suspendedReason       String?
-  deletedAt             DateTime?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  members               OrganizationMember[]
-  websites              Website[]
-  audits                Audit[]
-  subscriptions         Subscription[]
-  payments              Payment[]
-  invoices              Invoice[]
-  billingEvents         BillingEvent[]
-  usageRecords          UsageRecord[]
-  apiKeys               ApiKey[]
-  apiUsages             ApiUsage[]
-  webhooks              WebhookEndpoint[]
-  webhookDeliveries     WebhookDelivery[]
-  outboxEvents          OutboxEvent[]
-  reports               Report[]
-  monitoringConfigs     MonitoringConfig[]
-  monitoringRuns        MonitoringRun[]
-  monitoringAlerts      MonitoringAlert[]
-  testimonials          Testimonial[]
-  clientWorkspaces      ClientWorkspace[]
-  prospectCampaigns     ProspectCampaign[]
-  prospects             Prospect[]
-  pitches               Pitch[]
-  widgets               Widget[]
-  competitorComparisons CompetitorComparison[]
-  pitchGenerations      PitchGeneration[]
+  id                      String                   @id @default(uuid())
+  name                    String
+  slug                    String                   @unique
+  isSuspended             Boolean                  @default(false)
+  suspendedReason         String?
+  deletedAt               DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  members                 OrganizationMember[]
+  websites                Website[]
+  audits                  Audit[]
+  subscriptions           Subscription[]
+  payments                Payment[]
+  invoices                Invoice[]
+  billingEvents           BillingEvent[]
+  usageRecords            UsageRecord[]
+  apiKeys                 ApiKey[]
+  apiUsages               ApiUsage[]
+  webhooks                WebhookEndpoint[]
+  webhookDeliveries       WebhookDelivery[]
+  outboxEvents            OutboxEvent[]
+  reports                 Report[]
+  monitoringConfigs       MonitoringConfig[]
+  monitoringRuns          MonitoringRun[]
+  monitoringAlerts        MonitoringAlert[]
+  testimonials            Testimonial[]
+  clientWorkspaces        ClientWorkspace[]
+  prospectCampaigns       ProspectCampaign[]
+  prospects               Prospect[]
+  pitches                 Pitch[]
+  widgets                 Widget[]
+  competitorComparisons   CompetitorComparison[]
+  pitchGenerations        PitchGeneration[]
   notificationPreferences NotificationPreference[]
-  expressFixFulfillments ExpressFixFulfillment[]
-  expressFixLeads ExpressFixLead[]
-  funnelEvents FunnelEvent[]
+  expressFixFulfillments  ExpressFixFulfillment[]
+  expressFixLeads         ExpressFixLead[]
+  funnelEvents            FunnelEvent[]
 }
 
 model OrganizationMember {
@@ -269,26 +277,27 @@ model OrganizationMember {
 }
 
 model Website {
-  id                String            @id @default(uuid())
-  organizationId    String
-  clientWorkspaceId String?
-  url               String
-  normalizedUrl     String
-  domain            String
-  name              String
-  status            String            @default("ACTIVE")
-  deletedAt         DateTime?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  clientWorkspace   ClientWorkspace?  @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
-  domains           WebsiteDomain[]
-  settings          WebsiteSettings?
-  audits            Audit[]
-  monitoringConfig  MonitoringConfig?
+  id                     String                  @id @default(uuid())
+  organizationId         String
+  clientWorkspaceId      String?
+  url                    String
+  normalizedUrl          String
+  domain                 String
+  name                   String
+  status                 String                  @default("ACTIVE")
+  deletedAt              DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace        ClientWorkspace?        @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+  domains                WebsiteDomain[]
+  settings               WebsiteSettings?
+  audits                 Audit[]
+  monitoringConfig       MonitoringConfig?
   expressFixFulfillments ExpressFixFulfillment[]
-  expressFixLeads ExpressFixLead[]
-  funnelEvents FunnelEvent[]
+  expressFixLeads        ExpressFixLead[]
+  funnelEvents           FunnelEvent[]
+  vaultAuditFindings     VaultAuditFinding[]
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
@@ -312,42 +321,43 @@ model WebsiteSettings {
 }
 
 model Audit {
-  id                String         @id @default(uuid())
-  organizationId    String
-  websiteId         String
-  status            AuditStatus    @default(QUEUED)
-  progress          Int            @default(0)
-  progressStage     String         @default("queued")
-  idempotencyKey    String?
-  scoringVersion    String         @default("v3")
-  queuedAt          DateTime       @default(now())
-  startedAt         DateTime?
-  completedAt       DateTime?
-  durationMs        Int?
-  pagesDiscovered   Int            @default(0)
-  pagesFetched      Int            @default(0)
-  pagesScanned      Int            @default(0)
-  findingsGenerated Int            @default(0)
-  businessImpact    Json?
-  executiveSummary  Json?
-  telemetry         Json?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  website           Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  runs              AuditRun[]
-  pages             AuditPage[]
-  findings          AuditFinding[]
-  score             AuditScore?
-  reports           Report[]
-  prospects         Prospect[]
+  id                     String                  @id @default(uuid())
+  organizationId         String
+  websiteId              String
+  status                 AuditStatus             @default(QUEUED)
+  progress               Int                     @default(0)
+  progressStage          String                  @default("queued")
+  idempotencyKey         String?
+  scoringVersion         String                  @default("v3")
+  queuedAt               DateTime                @default(now())
+  startedAt              DateTime?
+  completedAt            DateTime?
+  durationMs             Int?
+  pagesDiscovered        Int                     @default(0)
+  pagesFetched           Int                     @default(0)
+  pagesScanned           Int                     @default(0)
+  findingsGenerated      Int                     @default(0)
+  businessImpact         Json?
+  executiveSummary       Json?
+  telemetry              Json?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website                Website                 @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  runs                   AuditRun[]
+  pages                  AuditPage[]
+  findings               AuditFinding[]
+  score                  AuditScore?
+  reports                Report[]
+  prospects              Prospect[]
   expressFixFulfillments ExpressFixFulfillment[]
-  expressFixLeads ExpressFixLead[]
-  funnelEvents FunnelEvent[]
+  vaultAuditFindings     VaultAuditFinding[]
+  expressFixLeads        ExpressFixLead[]
+  funnelEvents           FunnelEvent[]
 
+  @@unique([organizationId, idempotencyKey])
   @@index([organizationId, createdAt])
   @@index([websiteId, status])
-  @@unique([organizationId, idempotencyKey])
 }
 
 model AuditPage {
@@ -412,6 +422,35 @@ model AuditFinding {
   @@index([auditId, category])
   @@index([auditId, normalizedIssueKey])
   @@index([auditId, scoreImpact])
+}
+
+model VaultAuditFinding {
+  id                 String           @id @default(uuid())
+  auditId            String
+  websiteId          String
+  scannerKey         String
+  normalizedIssueKey String
+  severity           Severity
+  title              String
+  description        String
+  status             VaultAuditStatus @default(OPEN)
+  evidence           Json
+  affectedUrl        String?
+  recommendation     String
+  scoreImpact        Int
+  cwe                String?
+  cvssVector         String?
+  cvssScore          Float?
+  ignoreReason       String?
+  firstSeenAt        DateTime         @default(now())
+  lastSeenAt         DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  audit              Audit            @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  website            Website          @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId, normalizedIssueKey, status])
+  @@index([auditId, severity])
+  @@index([websiteId, status])
 }
 
 model AuditScore {
@@ -507,13 +546,13 @@ model MonitoringConfig {
 }
 
 model MonitoringRun {
-  id                  String            @id @default(uuid())
+  id                  String              @id @default(uuid())
   monitoringConfigId  String
   websiteId           String
   organizationId      String
   scheduledSlot       String?
   idempotencyKey      String?
-  status              MonitoringStatus  @default(QUEUED)
+  status              MonitoringStatus    @default(QUEUED)
   httpStatus          Int?
   responseTimeMs      Int?
   tlsValid            Boolean?
@@ -521,19 +560,19 @@ model MonitoringRun {
   redirectChain       Json?
   scores              Json?
   scoreDeltas         Json?
-  pagesEvaluated      Int               @default(1)
-  findingsCount       Int               @default(0)
-  newRegressionsCount Int               @default(0)
-  resolvedCount       Int               @default(0)
+  pagesEvaluated      Int                 @default(1)
+  findingsCount       Int                 @default(0)
+  newRegressionsCount Int                 @default(0)
+  resolvedCount       Int                 @default(0)
   telemetry           Json?
   errorCode           String?
   scheduledAt         DateTime?
   startedAt           DateTime?
   completedAt         DateTime?
   durationMs          Int?
-  createdAt           DateTime          @default(now())
-  config              MonitoringConfig  @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
-  organization        Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt           DateTime            @default(now())
+  config              MonitoringConfig    @relation(fields: [monitoringConfigId], references: [id], onDelete: Cascade)
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   findings            MonitoringFinding[]
   alerts              MonitoringAlert[]
 
@@ -631,25 +670,25 @@ model Subscription {
 }
 
 model Payment {
-  id                String         @id @default(uuid())
-  organizationId    String
-  subscriptionId    String?
-  provider          String         @default("RAZORPAY")
-  providerPaymentId String         @unique
-  providerOrderId   String?
-  providerSignature String?
-  amountInPaise     Int
-  currency          String         @default("INR")
-  status            PaymentStatus  @default(CAPTURED)
-  purpose           PaymentPurpose @default(SUBSCRIPTION)
-  metadata          Json?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  subscription      Subscription?  @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  invoices          Invoice[]
+  id                    String                 @id @default(uuid())
+  organizationId        String
+  subscriptionId        String?
+  provider              String                 @default("RAZORPAY")
+  providerPaymentId     String                 @unique
+  providerOrderId       String?
+  providerSignature     String?
+  amountInPaise         Int
+  currency              String                 @default("INR")
+  status                PaymentStatus          @default(CAPTURED)
+  purpose               PaymentPurpose         @default(SUBSCRIPTION)
+  metadata              Json?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription          Subscription?          @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  invoices              Invoice[]
   expressFixFulfillment ExpressFixFulfillment?
-  expressFixLead ExpressFixLead?
+  expressFixLead        ExpressFixLead?
 
   @@index([organizationId, createdAt])
 }
@@ -674,21 +713,21 @@ model Invoice {
 }
 
 model ExpressFixFulfillment {
-  id             String            @id @default(uuid())
+  id             String           @id @default(uuid())
   organizationId String
   websiteId      String
   auditId        String?
-  paymentId      String            @unique
-  status         ExpressFixStatus  @default(ORDER_CREATED)
+  paymentId      String           @unique
+  status         ExpressFixStatus @default(ORDER_CREATED)
   notes          String?
   assignedTo     String?
   completedAt    DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  website        Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  audit          Audit?            @relation(fields: [auditId], references: [id], onDelete: SetNull)
-  payment        Payment           @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website        Website          @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  audit          Audit?           @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  payment        Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   lead           ExpressFixLead?
 
   @@index([organizationId, status])
@@ -696,21 +735,21 @@ model ExpressFixFulfillment {
 }
 
 model ExpressFixLead {
-  id             String                @id @default(uuid())
+  id             String                 @id @default(uuid())
   organizationId String
   email          String
   name           String?
   websiteId      String
   auditId        String
-  paymentId      String?           @unique
-  fulfillmentId  String?           @unique
-  source         String                @default("GUEST_CHECKOUT")
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  website        Website               @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  audit          Audit                 @relation(fields: [auditId], references: [id], onDelete: Cascade)
-  payment        Payment?              @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paymentId      String?                @unique
+  fulfillmentId  String?                @unique
+  source         String                 @default("GUEST_CHECKOUT")
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website        Website                @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  audit          Audit                  @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  payment        Payment?               @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   fulfillment    ExpressFixFulfillment? @relation(fields: [fulfillmentId], references: [id], onDelete: SetNull)
 
   @@unique([email, auditId])
@@ -826,7 +865,7 @@ model ClientWorkspace {
   contactName           String?
   contactEmail          String?
   notes                 String?
-  branding              Json?                   // { logoUrl, companyName, website, supportEmail, primaryColor, secondaryColor, footer }
+  branding              Json? // { logoUrl, companyName, website, supportEmail, primaryColor, secondaryColor, footer }
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
   archivedAt            DateTime?
@@ -855,27 +894,27 @@ model ClientWorkspaceMember {
 }
 
 model ProspectCampaign {
-  id                String           @id @default(uuid())
-  organizationId    String
-  clientWorkspaceId String?
-  name              String
-  source            String           @default("MANUAL") // CSV, MANUAL, SEARCH
-  status            String           @default("DRAFT")  // DRAFT, QUEUED, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED, PARTIAL
-  targetCount       Int              @default(0)
-  processedCount    Int              @default(0)
-  successfulCount   Int              @default(0)
-  failedCount       Int              @default(0)
-  skippedCount      Int              @default(0)
-  qualifiedCount    Int              @default(0)
+  id                    String           @id @default(uuid())
+  organizationId        String
+  clientWorkspaceId     String?
+  name                  String
+  source                String           @default("MANUAL") // CSV, MANUAL, SEARCH
+  status                String           @default("DRAFT") // DRAFT, QUEUED, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED, PARTIAL
+  targetCount           Int              @default(0)
+  processedCount        Int              @default(0)
+  successfulCount       Int              @default(0)
+  failedCount           Int              @default(0)
+  skippedCount          Int              @default(0)
+  qualifiedCount        Int              @default(0)
   qualificationCriteria Json?
-  errorMessage      String?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  clientWorkspace   ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
-  prospects         Prospect[]
+  errorMessage          String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientWorkspace       ClientWorkspace? @relation(fields: [clientWorkspaceId], references: [id], onDelete: SetNull)
+  prospects             Prospect[]
 
   @@index([organizationId, status])
   @@index([clientWorkspaceId])
@@ -1088,4 +1127,3 @@ model NotificationPreference {
 
   @@unique([userId, organizationId, channel])
 }
-
