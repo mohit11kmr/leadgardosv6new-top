@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { db } from '@leadguard/database';
 import { collectVaultProbeFacts, upsertVaultFindings } from './vaultRunner.js';
 import { collectVaultFindings, type PageRecord, type VaultFinding } from '@leadguard/shared';
+import { computeVaultScore, countRiskBySeverity } from './vaultScan.js';
 
 function page(overrides: Partial<PageRecord> = {}): PageRecord {
   return {
@@ -125,5 +126,39 @@ describe('VaultGuard runner: persistence (VaultAuditFinding)', () => {
     const count2 = await db.vaultAuditFinding.count({ where: { websiteId: site.id, normalizedIssueKey: 'SEC_SERVER_LEAK' } });
     expect(second).toBe(1);
     expect(count2).toBe(1);
+  });
+});
+
+describe('VaultGuard scan: score computation', () => {
+  const mk = (key: string, scoreImpact: number, severity: VaultFinding['severity']): VaultFinding =>
+    ({
+      ruleId: 'LG-038', internalKey: key, normalizedIssueKey: key,
+      category: 'SECURITY', scope: 'WEBSITE', severity,
+      title: key, description: key, evidence: {}, recommendation: '',
+      scoreImpact,
+    }) as VaultFinding;
+
+  it('dedupes by normalizedIssueKey and floors at 0', () => {
+    const findings = [
+      mk('A', 10, 'HIGH'),
+      mk('A', 10, 'HIGH'), // duplicate key
+      mk('B', 5, 'MEDIUM'),
+    ];
+    expect(computeVaultScore(findings)).toBe(85);
+  });
+
+  it('returns 0 when penalties exceed 100', () => {
+    expect(computeVaultScore([mk('A', 100, 'CRITICAL'), mk('B', 50, 'HIGH')])).toBe(0);
+  });
+
+  it('returns 100 for a clean scan', () => {
+    expect(computeVaultScore([])).toBe(100);
+  });
+
+  it('counts risk by severity', () => {
+    const counts = countRiskBySeverity([mk('A', 10, 'HIGH'), mk('B', 5, 'MEDIUM'), mk('C', 8, 'HIGH')]);
+    expect(counts.HIGH).toBe(2);
+    expect(counts.MEDIUM).toBe(1);
+    expect(counts.CRITICAL).toBe(0);
   });
 });

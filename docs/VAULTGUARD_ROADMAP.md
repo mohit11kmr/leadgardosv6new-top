@@ -199,14 +199,15 @@ Definition of done: each scanner ships with a `tests/security/vaultguard-*.test.
 
 ## 5b. API surface additions
 
-| Method | Route | Purpose |
-|---|---|---|
-| POST | `/websites/:id/security-audit` | Kick off VaultGuard scan (respects concurrency/quota) |
-| GET | `/websites/:id/security-audit` | Latest result: score + finding summary |
-| GET | `/websites/:id/security-audit/findings` | Paginated (tuple cursor `LG-026`), filter by severity/status |
-| POST | `/websites/:id/security-audit/retest` | Re-run only OPEN findings (cheaper, faster) |
-| PATCH | `/security-audit/findings/:id` | Mark `VERIFIED_IGNORED` with reason (audited) |
-| GET | `/security-audit/findings/:id/evidence` | Raw evidence blob (response headers/body excerpt) |
+| Method | Route | Purpose | Status |
+|---|---|---|---|
+| POST | `/websites/:id/security-audit` | Kick off VaultGuard scan (STANDARD/RETEST, idempotency, quota gated) | ✅ implemented |
+| GET | `/websites/:id/security-audit` | List runs for the website (desc by createdAt) | ✅ implemented |
+| GET | `/websites/:id/security-audit/:runId` | Single run + findings, score + summary | ✅ implemented |
+| GET | `/websites/:id/security-audit/:runId/findings` | Paginated (page/limit), filter by severity/status | ✅ implemented |
+| POST | `/websites/:id/security-audit/:runId/retest` | Re-run in RETEST mode; marks stale OPEN findings FIXED | ✅ implemented |
+| PATCH | `/websites/:id/security-audit/:runId/findings/:findingId` | Set `TRIAGED` / `VERIFIED_IGNORED` (+ reason, audited) | ✅ implemented |
+| GET | `/websites/:id/security-audit/:runId/findings/:findingId/evidence` | Raw evidence blob (response headers / body excerpt) | ✅ implemented |
 
 ## 6. Legal & safety guardrails (non-negotiable)
 
@@ -303,7 +304,7 @@ customer fixes the bugs that actually get exploited against them first.
 
 | Feature ID | Feature Name | Status | Test Suite | Notes |
 |---|---|:---:|---|---|
-| **LG-038** | VaultGuard Security Audit | `IN_PROGRESS` | `tests/security/vaultguard-*.test.ts` | Phase A scanners + registry + `VaultAuditFinding` table done; §5b API surface pending |
+| **LG-038** | VaultGuard Security Audit | `IN_PROGRESS` | `tests/security/vaultguard-*.test.ts` | Phase A scanners + registry + `VaultAuditRun`/`VaultAuditFinding` tables done; §5b API surface shipped (`/websites/:id/security-audit` POST/GET, findings, retest, PATCH finding, evidence) |
 | **LG-039** | VaultGuard AI Remediation | `PLANNED` | `tests/security/vaultguard-remediation.test.ts` | Cached Hinglish fix-guidance per detection key |
 | **LG-040** | VaultGuard Retest & Verified Loop | `PLANNED` | `tests/security/vaultguard-retest.test.ts` | OPEN-finding re-run + status transitions + ignore-audit |
 

@@ -47,6 +47,20 @@ enum VaultAuditStatus {
   VERIFIED_IGNORED
 }
 
+enum VaultRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum VaultRunMode {
+  STANDARD
+  RETEST
+}
+
 enum SubscriptionStatus {
   CREATED
   TRIALING
@@ -158,6 +172,7 @@ model User {
   clientWorkspaceMembers  ClientWorkspaceMember[]
   adminAuditLogs          AdminAuditLog[]
   notificationPreferences NotificationPreference[]
+  vaultIgnoredFindings    VaultAuditFinding[]
 }
 
 model Account {
@@ -298,6 +313,7 @@ model Website {
   expressFixLeads        ExpressFixLead[]
   funnelEvents           FunnelEvent[]
   vaultAuditFindings     VaultAuditFinding[]
+  vaultAuditRuns         VaultAuditRun[]
 
   @@unique([organizationId, url])
   @@index([organizationId, deletedAt])
@@ -352,6 +368,7 @@ model Audit {
   prospects              Prospect[]
   expressFixFulfillments ExpressFixFulfillment[]
   vaultAuditFindings     VaultAuditFinding[]
+  vaultAuditRuns         VaultAuditRun[]
   expressFixLeads        ExpressFixLead[]
   funnelEvents           FunnelEvent[]
 
@@ -426,7 +443,8 @@ model AuditFinding {
 
 model VaultAuditFinding {
   id                 String           @id @default(uuid())
-  auditId            String
+  auditId            String?
+  runId              String?
   websiteId          String
   scannerKey         String
   normalizedIssueKey String
@@ -442,15 +460,56 @@ model VaultAuditFinding {
   cvssVector         String?
   cvssScore          Float?
   ignoreReason       String?
+  ignoredById        String?
+  ignoredAt          DateTime?
   firstSeenAt        DateTime         @default(now())
   lastSeenAt         DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
-  audit              Audit            @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  audit              Audit?           @relation(fields: [auditId], references: [id], onDelete: Cascade)
   website            Website          @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  run                VaultAuditRun?   @relation("VaultAuditRunFindings", fields: [runId], references: [id], onDelete: Cascade)
+  ignoredBy          User?            @relation(fields: [ignoredById], references: [id], onDelete: SetNull)
 
   @@index([websiteId, normalizedIssueKey, status])
   @@index([auditId, severity])
   @@index([websiteId, status])
+  @@index([runId])
+  @@index([ignoredById])
+}
+
+model VaultAuditRun {
+  id               String         @id @default(uuid())
+  organizationId   String
+  websiteId        String
+  auditId          String?
+  mode             VaultRunMode   @default(STANDARD)
+  status           VaultRunStatus @default(QUEUED)
+  idempotencyKey   String?
+  triggerSource    String         @default("api")
+  triggeredBy      String?
+  pagesDiscovered  Int            @default(0)
+  pagesFetched     Int            @default(0)
+  pagesFailed      Int            @default(0)
+  findingsCount    Int            @default(0)
+  score            Int            @default(0)
+  summary          Json?
+  errorCode        String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  durationMs       Int?
+  cancelledAt      DateTime?
+  retestedFindings Int            @default(0)
+  fixedFindings    Int            @default(0)
+  createdAt        DateTime       @default(now())
+  website          Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  audit            Audit?         @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  findings         VaultAuditFinding[] @relation("VaultAuditRunFindings")
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([websiteId, status])
+  @@index([websiteId, createdAt])
+  @@index([organizationId, status])
+  @@index([auditId])
 }
 
 model AuditScore {

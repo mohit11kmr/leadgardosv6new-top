@@ -23,3 +23,13 @@ export const monitoringQueue = new Queue('monitoring', {
     removeOnFail: 100,
   },
 });
+
+export const vaultQueue = new Queue('vault', {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5000 },
+    removeOnComplete: 100,
+    removeOnFail: 100,
+  },
+});

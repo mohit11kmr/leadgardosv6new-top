@@ -258,11 +258,12 @@ export async function runVaultGuardScan(args: {
 }
 
 export async function upsertVaultFindings(args: {
-  auditId: string;
+  auditId?: string | null;
+  runId?: string | null;
   websiteId: string;
   findings: VaultFinding[];
 }): Promise<number> {
-  const { auditId, websiteId, findings } = args;
+  const { auditId, runId, websiteId, findings } = args;
   let persisted = 0;
 
   for (const finding of findings) {
@@ -271,13 +272,14 @@ export async function upsertVaultFindings(args: {
       where: {
         websiteId,
         normalizedIssueKey: issueKey,
-        status: { in: ['OPEN', 'TRIAGED'] },
+        status: { in: ['OPEN', 'TRIAGED', 'FIXED', 'VERIFIED'] },
       },
       orderBy: { firstSeenAt: 'desc' },
     });
 
     const row = {
-      auditId,
+      ...(auditId ? { auditId } : {}),
+      ...(runId ? { runId } : {}),
       websiteId,
       scannerKey: finding.internalKey ?? issueKey,
       normalizedIssueKey: issueKey,
@@ -296,10 +298,12 @@ export async function upsertVaultFindings(args: {
     };
 
     if (existing) {
-      await db.vaultAuditFinding.update({
-        where: { id: existing.id },
-        data: { ...row, firstSeenAt: existing.firstSeenAt },
-      });
+      if (existing.status !== 'VERIFIED_IGNORED') {
+        await db.vaultAuditFinding.update({
+          where: { id: existing.id },
+          data: { ...row, firstSeenAt: existing.firstSeenAt },
+        });
+      }
     } else {
       await db.vaultAuditFinding.create({ data: row });
     }

@@ -18,7 +18,7 @@ import {
 } from './auth.js';
 import { validateExternalUrl } from './security.js';
 import { getClientIp } from '@leadguard/shared';
-import { auditQueue } from './queue.js';
+import { auditQueue, vaultQueue } from './queue.js';
 import { intelligenceService } from './services/intelligenceService.js';
 import { apiKeyService } from './services/apiKeyService.js';
 import { authSecurityService } from './services/authSecurityService.js';
@@ -1333,6 +1333,342 @@ apiRouter.post('/audits/:id/cancel', requirePermission('AUDIT_CANCEL'), async (r
     next(error);
   }
 });
+
+// --- VaultGuard Security Audit Endpoints (LG-038, §5b) ---
+const vaultWebsite = async (websiteId: string, organizationId: string) =>
+  db.website.findFirst({
+    where: { id: websiteId, organizationId, deletedAt: null },
+  });
+
+const vaultRunError = (response: Response, code: string, message: string, req: Request) =>
+  response.status(code === 'NOT_FOUND' ? 404 : 403).json({
+    success: false,
+    error: { code, message, requestId: requestId(req) },
+  });
+
+apiRouter.post(
+  '/websites/:websiteId/security-audit',
+  requirePermission('SECURITY_AUDIT_RUN'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) {
+        return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+      }
+
+      const input = z
+        .object({
+          mode: z.enum(['STANDARD', 'RETEST']).default('STANDARD'),
+          idempotencyKey: z.string().min(8).max(100).optional(),
+          maxPages: z.number().int().min(1).max(50).optional(),
+          maxDepth: z.number().int().min(0).max(5).optional(),
+        })
+        .parse(request.body);
+
+      const { plan, entitlements } = await entitlementService.getOrganizationPlan(request.auth!.organizationId);
+      const planCode = plan?.code || 'FREE';
+
+      if (!entitlements.apiAccess && planCode !== 'ENTERPRISE') {
+        return vaultRunError(response, 'PLAN_LIMIT_REACHED', 'Security audits require an API-enabled plan.', request);
+      }
+
+      if (input.idempotencyKey) {
+        const existing = await db.vaultAuditRun.findFirst({
+          where: {
+            organizationId: request.auth!.organizationId,
+            websiteId: website.id,
+            idempotencyKey: input.idempotencyKey,
+          },
+        });
+        if (existing)
+          return response.status(200).json({ success: true, data: existing, meta: { idempotent: true } });
+      }
+
+      const canRun = await entitlementService.canRunAudit(request.auth!.organizationId);
+      if (!canRun.allowed) {
+        return vaultRunError(response, 'PLAN_LIMIT_REACHED', canRun.reason ?? 'Audit quota exhausted.', request);
+      }
+
+      let run: { id: string } | null = null;
+      try {
+        run = await db.vaultAuditRun.create({
+          data: {
+            organizationId: request.auth!.organizationId,
+            websiteId: website.id,
+            mode: input.mode,
+            triggerSource: 'api',
+            triggeredBy: request.auth!.sub,
+            ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+          },
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2002' || !input.idempotencyKey) throw error;
+        const dup = await db.vaultAuditRun.findUnique({
+          where: {
+            organizationId_idempotencyKey: {
+              organizationId: request.auth!.organizationId,
+              idempotencyKey: input.idempotencyKey,
+            },
+          },
+        });
+        return response.status(200).json({ success: true, data: dup, meta: { idempotent: true } });
+      }
+
+      await entitlementService.recordUsage(request.auth!.organizationId, 'AUDITS');
+      try {
+        await vaultQueue.add(
+          'vault:scan',
+          { runId: run.id, options: { maxPages: input.maxPages, maxDepth: input.maxDepth } },
+          { jobId: run.id }
+        );
+      } catch (error) {
+        await entitlementService.releaseUsage(request.auth!.organizationId, 'AUDITS');
+        await db.vaultAuditRun
+          .update({ where: { id: run.id }, data: { status: 'CANCELLED', errorCode: 'ENQUEUE_FAILED' } })
+          .catch(() => {});
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'api',
+            event: 'vault_enqueue_failed',
+            runId: run.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })
+        );
+        return response.status(503).json({
+          success: false,
+          error: {
+            code: 'QUEUE_UNAVAILABLE',
+            message: 'Security audit queue is temporarily unavailable. Please retry.',
+            requestId: requestId(request),
+          },
+        });
+      }
+      response.status(202).json({ success: true, data: run });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/websites/:websiteId/security-audit',
+  requirePermission('SECURITY_AUDIT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const runs = await db.vaultAuditRun.findMany({
+        where: { websiteId: website.id },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(Number(request.query.limit) || 25, 100),
+      });
+      response.json({ success: true, data: runs });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/websites/:websiteId/security-audit/:runId',
+  requirePermission('SECURITY_AUDIT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const run = await db.vaultAuditRun.findFirst({
+        where: { id: request.params.runId, websiteId: website.id },
+        include: { findings: true },
+      });
+      if (!run) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Security audit run not found', requestId: requestId(request) },
+        });
+      }
+      response.json({ success: true, data: run });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/websites/:websiteId/security-audit/:runId/findings',
+  requirePermission('SECURITY_AUDIT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const run = await db.vaultAuditRun.findFirst({
+        where: { id: request.params.runId, websiteId: website.id },
+        select: { id: true },
+      });
+      if (!run) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Security audit run not found', requestId: requestId(request) },
+        });
+      }
+
+      const statusValid = z.enum(['OPEN', 'TRIAGED', 'VERIFIED_IGNORED', 'FIXED']).safeParse(request.query.status);
+      const where = statusValid.success
+        ? { runId: run.id, status: statusValid.data as never }
+        : { runId: run.id };
+
+      const page = Math.max(Number(request.query.page) || 1, 1);
+      const limit = Math.min(Number(request.query.limit) || 50, 100);
+      const [findings, total] = await Promise.all([
+        db.vaultAuditFinding.findMany({
+          where,
+          orderBy: { severity: 'asc' },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        db.vaultAuditFinding.count({ where }),
+      ]);
+      response.json({ success: true, data: findings, meta: { total, page, limit } });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.post(
+  '/websites/:websiteId/security-audit/:runId/retest',
+  requirePermission('SECURITY_AUDIT_RUN'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const previous = await db.vaultAuditRun.findFirst({
+        where: { id: request.params.runId, websiteId: website.id },
+      });
+      if (!previous) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Security audit run not found', requestId: requestId(request) },
+        });
+      }
+
+      const canRun = await entitlementService.canRunAudit(request.auth!.organizationId);
+      if (!canRun.allowed) {
+        return vaultRunError(response, 'PLAN_LIMIT_REACHED', canRun.reason ?? 'Audit quota exhausted.', request);
+      }
+
+      const run = await db.vaultAuditRun.create({
+        data: {
+          organizationId: request.auth!.organizationId,
+          websiteId: website.id,
+          mode: 'RETEST',
+          triggerSource: 'retest',
+          triggeredBy: request.auth!.sub,
+          auditId: previous.auditId,
+        },
+      });
+
+      await entitlementService.recordUsage(request.auth!.organizationId, 'AUDITS');
+      try {
+        await vaultQueue.add(
+          'vault:scan',
+          { runId: run.id, options: {} },
+          { jobId: run.id }
+        );
+      } catch (error) {
+        await entitlementService.releaseUsage(request.auth!.organizationId, 'AUDITS');
+        await db.vaultAuditRun
+          .update({ where: { id: run.id }, data: { status: 'CANCELLED', errorCode: 'ENQUEUE_FAILED' } })
+          .catch(() => {});
+        return response.status(503).json({
+          success: false,
+          error: { code: 'QUEUE_UNAVAILABLE', message: 'Security audit queue is temporarily unavailable.', requestId: requestId(request) },
+        });
+      }
+      response.status(202).json({ success: true, data: run });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.patch(
+  '/websites/:websiteId/security-audit/:runId/findings/:findingId',
+  requirePermission('SECURITY_AUDIT_MANAGE'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const finding = await db.vaultAuditFinding.findFirst({
+        where: { id: request.params.findingId, runId: request.params.runId, websiteId: website.id },
+      });
+      if (!finding) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Finding not found', requestId: requestId(request) },
+        });
+      }
+
+      const input = z
+        .object({
+          status: z.enum(['TRIAGED', 'VERIFIED_IGNORED']).optional(),
+          ignoreReason: z.string().max(500).optional(),
+        })
+        .parse(request.body);
+
+      if (input.status === 'VERIFIED_IGNORED' && !input.ignoreReason) {
+        return response.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'ignoreReason is required when ignoring a finding.', requestId: requestId(request) },
+        });
+      }
+
+      const updated = await db.vaultAuditFinding.update({
+        where: { id: finding.id },
+        data: {
+          ...(input.status ? { status: input.status } : {}),
+          ...(input.ignoreReason ? { ignoreReason: input.ignoreReason } : {}),
+          ...(input.status === 'VERIFIED_IGNORED'
+            ? { ignoredById: request.auth!.sub, ignoredAt: new Date() }
+            : {}),
+        },
+      });
+      response.json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/websites/:websiteId/security-audit/:runId/findings/:findingId/evidence',
+  requirePermission('SECURITY_AUDIT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const finding = await db.vaultAuditFinding.findFirst({
+        where: { id: request.params.findingId, runId: request.params.runId, websiteId: website.id },
+        select: { id: true, evidence: true, affectedUrl: true },
+      });
+      if (!finding) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Finding not found', requestId: requestId(request) },
+        });
+      }
+      response.json({ success: true, data: { evidence: finding.evidence, affectedUrl: finding.affectedUrl } });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 // --- Intelligence Endpoints (RBAC: AUDIT_VIEW) ---
 apiRouter.get('/audits/:id/score/explanation', requirePermission('AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
