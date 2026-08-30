@@ -308,6 +308,127 @@ export class AdminService {
       hasMore,
     };
   }
+
+  /**
+   * Phase 2: Lists the Express Fix fulfillment queue (sales-ready pilot).
+   * Fulfillments are joined with their captured lead, website, payment and audit
+   * so operators can work the customer backlog in one place.
+   */
+  async listExpressFixQueue(
+    options: { cursor?: string; limit?: number; status?: string } = {}
+  ) {
+    const limit = Math.min(Math.max(options.limit || 20, 1), 100);
+
+    const where: any = {};
+    if (options.status) {
+      where.status = options.status;
+    }
+
+    const fulfillments = await db.expressFixFulfillment.findMany({
+      where,
+      take: limit + 1,
+      ...(options.cursor ? { skip: 1, cursor: { id: options.cursor } } : {}),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        website: { select: { id: true, domain: true, url: true } },
+        audit: { select: { id: true, status: true, createdAt: true, score: true } },
+        payment: { select: { id: true, amountInPaise: true, currency: true, status: true, providerPaymentId: true, createdAt: true } },
+        lead: { select: { id: true, email: true, name: true, source: true } },
+      },
+    });
+
+    const hasMore = fulfillments.length > limit;
+    const items = hasMore ? fulfillments.slice(0, limit) : fulfillments;
+    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+
+    return {
+      items: items.map((f) => ({
+        id: f.id,
+        status: f.status,
+        notes: f.notes,
+        assignedTo: f.assignedTo,
+        completedAt: f.completedAt,
+        createdAt: f.createdAt,
+        updatedAt: f.updatedAt,
+        website: f.website,
+        audit: f.audit,
+        payment: f.payment,
+        lead: f.lead,
+      })),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  /**
+   * Phase 2: Per-status counts for the Express Fix queue dashboard.
+   */
+  async getExpressFixQueueStats() {
+    const statuses = await db.expressFixFulfillment.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    });
+
+    const stats: Record<string, number> = {};
+    for (const row of statuses) {
+      stats[row.status] = row._count._all;
+    }
+
+    return {
+      total: (await db.expressFixFulfillment.count()),
+      byStatus: stats,
+    };
+  }
+
+  /**
+   * Phase 2: Transitions an Express Fix fulfillment status from the admin queue.
+   */
+  async transitionExpressFixStatus(
+    adminUserId: string,
+    fulfillmentId: string,
+    status: 'PAYMENT_PENDING' | 'PAID' | 'FULFILLMENT_PENDING' | 'FULFILLMENT_IN_PROGRESS' | 'FULFILLED' | 'FULFILLMENT_FAILED',
+    notes?: string,
+    ipAddress?: string
+  ) {
+    const fulfillment = await db.expressFixFulfillment.findUnique({
+      where: { id: fulfillmentId },
+    });
+
+    if (!fulfillment) {
+      const err = new Error('Fulfillment not found');
+      (err as any).code = 'NOT_FOUND';
+      throw err;
+    }
+
+    const updated = await db.expressFixFulfillment.update({
+      where: { id: fulfillmentId },
+      data: {
+        status,
+        notes,
+        ...(status === 'FULFILLED' ? { completedAt: new Date() } : { completedAt: null }),
+      },
+    });
+
+    await db.billingEvent.create({
+      data: {
+        organizationId: fulfillment.organizationId,
+        type: 'EXPRESS_FIX_FULFILLMENT_UPDATED',
+        providerEventId: fulfillment.paymentId,
+        data: { fulfillmentId: updated.id, status, notes, byAdmin: true },
+      },
+    });
+
+    await this.recordAdminAction(
+      adminUserId,
+      'EXPRESS_FIX_STATUS_UPDATED',
+      'EXPRESS_FIX_FULFILLMENT',
+      fulfillmentId,
+      { status, notes, previousStatus: fulfillment.status },
+      ipAddress
+    );
+
+    return updated;
+  }
 }
 
 export const adminService = new AdminService();

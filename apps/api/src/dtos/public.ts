@@ -26,6 +26,17 @@ export interface PublicAuditFindingDTO {
   severity: string;
   scoreImpact: number;
   recommendation: string;
+  businessImpact?: string | null;
+  affectedUrl?: string | null;
+  evidence?: string | null;
+}
+
+export interface OpportunityLossEstimate {
+  currency: string;
+  amount: number;
+  isEstimate: boolean;
+  basis: string;
+  assumptions: string[];
 }
 
 export interface PublicAuditDTO {
@@ -34,6 +45,8 @@ export interface PublicAuditDTO {
   status: string;
   score: PublicAuditScoreDTO | null;
   findings?: PublicAuditFindingDTO[];
+  totalFindings: number;
+  estimatedOpportunityLoss?: OpportunityLossEstimate | null;
   createdAt: string;
 }
 

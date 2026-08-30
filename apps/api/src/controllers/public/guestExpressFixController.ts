@@ -2,6 +2,9 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { billingService } from '../../services/billingService.js';
 import { guestScanService } from '../../services/public/guestScanService.js';
+import { systemGuestOrganizationService } from '../../services/systemGuestOrganizationService.js';
+import { leadService } from '../../services/leadService.js';
+import { funnelEventService, FUNNEL_EVENTS } from '../../services/funnelEventService.js';
 import { getClientIp } from '@leadguard/shared';
 
 export const guestExpressFixRouter = Router();
@@ -44,6 +47,24 @@ guestExpressFixRouter.post('/checkout', async (req: Request, res: Response, next
     const websiteId = scanResult.website.id;
     const auditId = scanResult.id;
 
+    // Phase 2 §16: capture a sales lead (de-duplicated by email+audit).
+    const organizationId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
+    await leadService.getOrCreateForAudit({
+      organizationId,
+      websiteId,
+      auditId,
+      email: input.email,
+      name: input.name,
+    });
+
+    await funnelEventService.record({
+      organizationId,
+      type: FUNNEL_EVENTS.EXPRESS_FIX_CLICKED,
+      websiteId,
+      auditId,
+      data: { email: input.email },
+    });
+
     // Create Express Fix checkout order
     const order = await billingService.createGuestExpressFixCheckout(
       websiteId,
@@ -51,6 +72,14 @@ guestExpressFixRouter.post('/checkout', async (req: Request, res: Response, next
       input.email,
       input.name
     );
+
+    await funnelEventService.record({
+      organizationId,
+      type: FUNNEL_EVENTS.CHECKOUT_STARTED,
+      websiteId,
+      auditId,
+      data: { orderId: order.orderId, email: input.email },
+    });
 
     res.status(201).json({
       success: true,
@@ -83,19 +112,33 @@ guestExpressFixRouter.post('/verify', async (req: Request, res: Response, next: 
     const websiteId = scanResult.website.id;
     const auditId = scanResult.id;
 
-    // Verify the payment
-    const result = await billingService.verifyGuestExpressFixPayment(
-      input.orderId,
-      input.paymentId,
-      input.signature,
-      websiteId,
-      auditId
-    );
+    try {
+      // Verify the payment
+      const result = await billingService.verifyGuestExpressFixPayment(
+        input.orderId,
+        input.paymentId,
+        input.signature,
+        websiteId,
+        auditId
+      );
 
-    res.status(200).json({
-      success: true,
-      data: result,
-    });
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error.code !== 'INVALID_REQUEST' && error.code !== 'SCAN_NOT_FOUND') {
+        const organizationId = await systemGuestOrganizationService.getOrCreateSystemGuestOrganization();
+        await funnelEventService.record({
+          organizationId,
+          type: FUNNEL_EVENTS.PAYMENT_FAILED,
+          websiteId,
+          auditId,
+          data: { orderId: input.orderId, paymentId: input.paymentId },
+        });
+      }
+      throw error;
+    }
   } catch (error: any) {
     if (error.code === 'INVALID_REQUEST' || error.code === 'SCAN_NOT_FOUND') {
       return res.status(400).json({

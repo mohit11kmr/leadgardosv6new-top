@@ -3,6 +3,8 @@ import { db } from '@leadguard/database';
 import { razorpayProvider } from '../billing/razorpayProvider.js';
 import { recordSecurityEvent } from '../auth.js';
 import { systemGuestOrganizationService } from './systemGuestOrganizationService.js';
+import { leadService } from './leadService.js';
+import { funnelEventService, FUNNEL_EVENTS } from './funnelEventService.js';
 
 export const DEFAULT_COMMERCIAL_PLANS = [
   {
@@ -529,6 +531,16 @@ export class BillingService {
       },
     });
 
+    if (auditId) {
+      await funnelEventService.record({
+        organizationId,
+        type: FUNNEL_EVENTS.FULFILLMENT_CREATED,
+        websiteId,
+        auditId,
+        data: { fulfillmentId: fulfillment.id, paymentId },
+      });
+    }
+
     return fulfillment;
   }
 
@@ -922,6 +934,32 @@ export class BillingService {
     // 11. Update fulfillment status to PAID (fulfillment pending)
     await this.updateExpressFixFulfillment(paymentId, 'FULFILLMENT_PENDING');
 
+    // 12. Link the captured payment to the captured sales lead (if present)
+    if (orderData.customerEmail) {
+      const lead = await leadService.getOrCreateForAudit({
+        organizationId: systemGuestOrgId,
+        websiteId,
+        auditId,
+        email: orderData.customerEmail,
+        name: orderData.customerName,
+      });
+      await leadService.linkPayment(lead.id, paymentId);
+      const fulfillment = await db.expressFixFulfillment.findUnique({ where: { paymentId } });
+      if (fulfillment) {
+        await leadService.linkFulfillment(lead.id, fulfillment.id);
+      }
+    }
+
+    await funnelEventService.record({
+      organizationId: systemGuestOrgId,
+      type: FUNNEL_EVENTS.PAYMENT_SUCCESS,
+      websiteId,
+      auditId,
+      data: { orderId, paymentId, amount: amountInPaise },
+    });
+
+    const fulfillmentRecord = await db.expressFixFulfillment.findUnique({ where: { paymentId } });
+
     // Log successful verification
     console.log(JSON.stringify({
       level: 'info',
@@ -934,7 +972,7 @@ export class BillingService {
       organizationId: systemGuestOrgId,
     }));
 
-    return { payment, invoice, duplicate: false };
+    return { payment, invoice, duplicate: false, fulfillmentId: fulfillmentRecord?.id ?? null };
   }
 
   /**

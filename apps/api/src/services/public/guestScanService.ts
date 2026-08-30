@@ -7,6 +7,7 @@ import {
 import { auditQueue } from '../../queue.js';
 import { redisClient } from '../../middleware/rateLimiters.js';
 import { systemGuestOrganizationService } from '../systemGuestOrganizationService.js';
+import { funnelEventService, FUNNEL_EVENTS } from '../funnelEventService.js';
 import type { PublicAuditDTO, PublicWebsiteDTO } from '../../dtos/public.js';
 
 export class GuestScanError extends Error {
@@ -132,6 +133,14 @@ export class GuestScanService {
 
     await this.recordGuestRateLimit(ip, domain);
 
+    await funnelEventService.record({
+      organizationId: orgId,
+      type: FUNNEL_EVENTS.FREE_SCAN_STARTED,
+      websiteId: website.id,
+      auditId: audit.id,
+      data: { url: normalized },
+    });
+
     return this.formatGuestScanResult(audit);
   }
 
@@ -163,6 +172,16 @@ export class GuestScanService {
 
     if (!audit) {
       return null;
+    }
+
+    if (audit.status === 'COMPLETED') {
+      await funnelEventService.record({
+        organizationId: orgId,
+        type: FUNNEL_EVENTS.FREE_SCAN_COMPLETED,
+        websiteId: audit.website?.id,
+        auditId: audit.id,
+        data: { findingsCount: audit.findings?.length ?? 0 },
+      });
     }
 
     return this.formatPublicAuditDto(audit);
@@ -312,11 +331,17 @@ export class GuestScanService {
             severity: f.severity,
             scoreImpact: f.scoreImpact,
             recommendation: f.recommendation,
+            businessImpact: f.businessImpact || null,
             affectedUrl: f.affectedUrl,
             evidence: this.sanitizeEvidence(f.evidence),
             normalizedIssueKey: f.normalizedIssueKey,
           }))
         : undefined,
+      totalFindings: audit.findings ? audit.findings.length : 0,
+      // No fabricated aggregate revenue/opportunity figure is emitted here.
+      // Any visitor-facing estimate must be computed client-side from the
+      // user's own inputs with explicit assumptions (§ no-fake-data policy).
+      estimatedOpportunityLoss: null,
       createdAt: audit.createdAt instanceof Date ? audit.createdAt.toISOString() : audit.createdAt,
     };
   }

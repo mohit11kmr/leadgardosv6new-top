@@ -42,5 +42,7 @@ export const config = z
     SYSTEM_GUEST_ORGANIZATION_NAME: z.string().default('LeadGuard Guest Scans'),
     // Trust Proxy Configuration
     TRUST_PROXY: z.coerce.boolean().default(false),
+    // Phase 2: First-Customer Pilot Mode
+    FIRST_CUSTOMER_MODE: z.coerce.boolean().default(false),
   })
   .parse(process.env);

@@ -2129,6 +2129,47 @@ apiRouter.get('/admin/audit-logs', requirePermission('SECURITY_AUDIT_VIEW'), asy
   }
 });
 
+apiRouter.get('/admin/express-fix', requirePermission('ADMIN_DASHBOARD_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const status = request.query.status as string | undefined;
+    const result = await adminService.listExpressFixQueue({ cursor, limit, status });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/admin/express-fix/stats', requirePermission('ADMIN_DASHBOARD_VIEW'), async (_request: AuthRequest, response, next) => {
+  try {
+    const result = await adminService.getExpressFixQueueStats();
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/admin/express-fix/:id/status', requirePermission('ADMIN_DASHBOARD_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const { status, notes } = request.body;
+    const ip = getClientIp(request);
+    const updated = await adminService.transitionExpressFixStatus(
+      request.auth!.sub,
+      request.params.id,
+      status,
+      notes,
+      ip
+    );
+    response.json({ success: true, data: { id: updated.id, status: updated.status } });
+  } catch (error: any) {
+    if (error.code === 'NOT_FOUND') {
+      return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: error.message } });
+    }
+    next(error);
+  }
+});
+
 // ==========================================
 // PHASE 8: SETTINGS & SECURITY
 // ==========================================

@@ -27,11 +27,16 @@ interface ScanResult {
     severity: string;
     scoreImpact: number;
     recommendation: string;
+    businessImpact?: string | null;
     affectedUrl?: string;
     evidence?: any;
     normalizedIssueKey?: string;
   }> | undefined;
+  totalFindings: number;
   createdAt: string;
+  estimatedOpportunityLoss?: {
+    isEstimate?: boolean;
+  } | null;
 }
 
 export function ScanResultView() {
@@ -156,6 +161,17 @@ export function ScanResultView() {
 
   const topFindings = scan.findings?.slice(0, 5) || [];
 
+  const hasCategory = (cat: string) => (scan.findings ?? []).some((f) => f.category === cat);
+  const issueAreas = [
+    hasCategory('LEAD') ? 'lead capture' : null,
+    hasCategory('ADVERTISING') ? 'ad spend' : null,
+    hasCategory('SEO') ? 'organic traffic' : null,
+    hasCategory('SECURITY') ? 'trust & security' : null,
+  ].filter(Boolean).join(', ');
+  const expressFixHeadline = issueAreas
+    ? `Fix the ${issueAreas} leaks causing lost conversions`
+    : 'Fix your lead leaks and start recovering conversions';
+
   return (
     <div style={{ minHeight: '100vh', background: '#0b0f19', color: '#f8fafc', fontFamily: 'Inter, -apple-system, sans-serif' }}>
       <header style={{
@@ -276,8 +292,18 @@ export function ScanResultView() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                 <IconAlertCircle size={20} color="#f59e0b" />
                 Most Important Problems Found
+                {scan.totalFindings > 0 && (
+                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#94a3b8', background: '#1e293b', border: '1px solid #334155', padding: '2px 10px', borderRadius: '9999px' }}>
+                    {scan.totalFindings} issue{scan.totalFindings !== 1 ? 's' : ''} detected
+                  </span>
+                )}
               </span>
             </h2>
+            {topFindings.length < (scan.totalFindings ?? 0) && (
+              <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '-8px', marginBottom: '20px' }}>
+                Showing the {topFindings.length} most severe of {scan.totalFindings} findings on this free scan. The full Express Fix review covers all of them.
+              </p>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {topFindings.map((finding) => (
                 <div key={finding.id} style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px', borderLeft: `4px solid ${getSeverityColor(finding.severity)}` }}>
@@ -298,6 +324,15 @@ export function ScanResultView() {
                       </div>
                       <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#fff', margin: '0 0 8px' }}>{finding.title}</h3>
                       <p style={{ fontSize: '14px', color: '#cbd5e1', lineHeight: '1.6', margin: '0 0 12px' }}>{finding.description}</p>
+
+                      {finding.businessImpact && (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '12px', background: 'rgba(56, 189, 248, 0.06)', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.2)', marginBottom: '12px' }}>
+                          <IconTarget size={16} color="#38bdf8" style={{ flexShrink: 0, marginTop: '1px' }} />
+                          <div style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: '1.6' }}>
+                            <strong style={{ color: '#38bdf8' }}>What this costs you:</strong> {finding.businessImpact}
+                          </div>
+                        </div>
+                      )}
                       
                       {finding.affectedUrl && (
                         <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '12px', fontFamily: 'monospace', background: '#1e293b', padding: '8px 12px', borderRadius: '6px', wordBreak: 'break-all' }}>
@@ -339,7 +374,7 @@ export function ScanResultView() {
                 </div>
                 <div>
                   <h3 style={{ fontSize: '24px', fontWeight: '800', color: '#fff', margin: 0 }}>Express Fix — ₹2,999</h3>
-                  <p style={{ fontSize: '14px', color: '#94a3b8', margin: '4px 0 0' }}>One-time expert remediation for critical & high priority lead leaks</p>
+                  <p style={{ fontSize: '14px', color: '#94a3b8', margin: '4px 0 0' }}>{expressFixHeadline}</p>
                 </div>
               </div>
 
@@ -405,7 +440,7 @@ export function ScanResultView() {
 
         {/* Disclaimer */}
         <div style={{ padding: '16px', background: '#131c31', border: '1px solid #1e293b', borderRadius: '10px', fontSize: '13px', color: '#94a3b8' }}>
-          <strong style={{ color: '#cbd5e1' }}>Important:</strong> The Lead Health Score and potential opportunity estimates are based on diagnostic findings and standard model assumptions (default: 10,000 monthly visitors, 2% conversion rate, ₹5,000 average lead value). They represent <strong>estimated potential opportunity</strong>, not guaranteed lost revenue. Actual business impact varies based on your traffic, conversion rates, and lead values.
+          <strong style={{ color: '#cbd5e1' }}>Important:</strong> The Lead Health Score reflects real diagnostic findings from this scan — not a revenue claim. The <strong>"what this costs you"</strong> notes describe the conversion risk of each detected issue. To estimate monetary impact for your business, apply your own monthly visitors, conversion rate, and average lead value.
         </div>
       </main>
 

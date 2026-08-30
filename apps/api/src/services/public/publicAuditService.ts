@@ -233,6 +233,8 @@ export class PublicAuditService {
             recommendation: f.recommendation,
           }))
         : undefined,
+      totalFindings: audit.findings ? audit.findings.length : 0,
+      estimatedOpportunityLoss: null,
       createdAt: audit.createdAt instanceof Date ? audit.createdAt.toISOString() : audit.createdAt,
     };
   }

@@ -49,6 +49,8 @@ export function ExpressFixCheckoutView() {
   const [loading, setLoading] = useState(true);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [paymentComplete, setPaymentComplete] = useState(false);
+  const [paymentFailed, setPaymentFailed] = useState<string | null>(null);
+  const [fulfillmentId, setFulfillmentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rzpLoaded, setRzpLoaded] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(true);
@@ -162,7 +164,7 @@ export function ExpressFixCheckoutView() {
 
     const rzp = new window.Razorpay(options);
     rzp.on('payment.failed', (response: any) => {
-      setError(`Payment failed: ${response.error.description}`);
+      setPaymentFailed('Your payment was not completed and no charge was made. You can try again below or return to your scan results.');
       setCreatingOrder(false);
     });
     rzp.open();
@@ -180,6 +182,7 @@ export function ExpressFixCheckoutView() {
     });
 
     if (result.success) {
+      setFulfillmentId(result.data?.fulfillmentId ?? null);
       setPaymentComplete(true);
       setCreatingOrder(false);
     } else {
