@@ -209,6 +209,15 @@ Definition of done: each scanner ships with a `tests/security/vaultguard-*.test.
 | PATCH | `/websites/:id/security-audit/:runId/findings/:findingId` | Set `TRIAGED` / `VERIFIED_IGNORED` (+ reason, audited) | ✅ implemented |
 | GET | `/websites/:id/security-audit/:runId/findings/:findingId/evidence` | Raw evidence blob (response headers / body excerpt) | ✅ implemented |
 
+### Webhook event
+
+When a vault run reaches a terminal state the worker emits `security.audit.completed`
+(event type `VAULT_AUDIT_COMPLETED`) through the transactional outbox and dispatches to
+every enabled webhook endpoint subscribed to the event or `*` (LG-021/LG-022). Payload
+carries `runId`, `websiteId`, `mode`, `status`, `score`, findings/fixed/retested counts,
+page counts, `durationMs`, `completedAt`, and the full run `summary`. Emission is
+fire-and-forget from the worker so webhook delivery failure never fails the scan.
+
 ## 6. Legal & safety guardrails (non-negotiable)
 
 1. Scan **only verified-owned** domains (DNS TXT / meta-tag proof) + explicit ToS consent.

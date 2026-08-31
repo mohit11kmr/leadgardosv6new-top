@@ -3,6 +3,7 @@ import { type VaultFinding } from '@leadguard/shared';
 import { BoundedCrawler } from './crawler.js';
 import type { CrawlOptions } from './types.js';
 import { runVaultGuardScan, upsertVaultFindings } from './vaultRunner.js';
+import { emitVaultCompleted } from '../webhook/vaultWebhookEmitter.js';
 
 export interface VaultScanResult {
   status: 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'CANCELLED';
@@ -164,6 +165,45 @@ export async function processVaultScan(
         errorCode: crawlResult.lastErrorCode ?? null,
       },
     });
+
+    // Fire-and-forget: emit security.audit.completed webhook (LG-021/LG-022).
+    // Failures must not fail the scan itself; outbox retries handle delivery.
+    const completed = await db.vaultAuditRun.findUnique({
+      where: { id: run.id },
+      select: {
+        organizationId: true,
+        mode: true,
+        status: true,
+        score: true,
+        findingsCount: true,
+        retestedFindings: true,
+        fixedFindings: true,
+        pagesDiscovered: true,
+        pagesFetched: true,
+        pagesFailed: true,
+        durationMs: true,
+        completedAt: true,
+        summary: true,
+      },
+    });
+    if (completed) {
+      emitVaultCompleted({
+        organizationId: completed.organizationId,
+        runId: run.id,
+        websiteId: run.websiteId,
+        run: completed,
+      }).catch((err) =>
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'worker',
+            event: 'vault_webhook_emit_failed',
+            runId: run.id,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
+        )
+      );
+    }
 
     return {
       status,
