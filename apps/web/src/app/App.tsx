@@ -14,6 +14,8 @@ import { AuditListView } from '../features/audits/AuditListView.js';
 import { AuditDetailView } from '../features/audits/AuditDetailView.js';
 import { MonitoringView } from '../features/monitoring/MonitoringView.js';
 import { MonitorDetailView } from '../features/monitoring/MonitorDetailView.js';
+import { SecurityAuditView } from '../features/security/SecurityAuditView.js';
+import { SecurityAuditDetailView } from '../features/security/SecurityAuditDetailView.js';
 import { BillingView } from '../features/billing/BillingView.js';
 import { ExpressFixCheckoutView } from '../features/billing/ExpressFixCheckoutView.js';
 import { AgencyDashboardView } from '../features/agency/AgencyDashboardView.js';
@@ -113,6 +115,22 @@ export function App() {
           element={
             <ProtectedRoute>
               <WebsiteDetailView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/websites/:id/security-audit"
+          element={
+            <ProtectedRoute>
+              <SecurityAuditView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/websites/:id/security-audit/:runId"
+          element={
+            <ProtectedRoute>
+              <SecurityAuditDetailView />
             </ProtectedRoute>
           }
         />

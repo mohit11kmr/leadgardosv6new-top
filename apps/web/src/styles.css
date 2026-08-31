@@ -1520,6 +1520,141 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .text-success { color: var(--success); }
 .text-warning { color: var(--warning); }
 
+/* Button / action groups */
+.btnGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cardActionsFlex {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Generic helpers */
+.inlineBlock { display: inline-block; }
+
+.pageSubtext {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: var(--space-1);
+}
+
+.monoText {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Metric cards layout (used across vault/monitoring views) */
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--space-4);
+}
+
+.metricLabel {
+  display: block;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.metricValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.pillarHealthList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Forms */
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.formLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.formControl,
+.formControl > select {
+  width: 100%;
+  padding: var(--space-3);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease;
+}
+
+.formControl:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+textarea.formControl {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.formHint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.formError {
+  color: var(--danger);
+  font-size: 0.8125rem;
+  background: var(--danger-light);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Modal footer actions */
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-color);
+}
+
+/* Inline success / action banner */
+.authSuccessMessage {
+  background: var(--success-light);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--success);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+}
+
+.authSuccessMessage p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
 /* Responsive adjustments */
 @media (max-width: 1024px) {
   .dashboardSplit { grid-template-columns: 1fr; }

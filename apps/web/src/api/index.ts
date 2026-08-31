@@ -6,3 +6,4 @@ export * from './audits.js';
 export * from './intelligence.js';
 export * from './billing.js';
 export * from './monitoring.js';
+export * from './security.js';

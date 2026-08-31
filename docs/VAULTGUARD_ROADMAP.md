@@ -229,6 +229,17 @@ carries `runId`, `websiteId`, `mode`, `status`, `score`, findings/fixed/retested
 page counts, `durationMs`, `completedAt`, and the full run `summary`. Emission is
 fire-and-forget from the worker so webhook delivery failure never fails the scan.
 
+### Frontend UI
+
+`apps/web/src/features/security/SecurityAuditView.tsx` (run history + one-click trigger modal with
+`maxPages`/`maxDepth` + idempotency) and `SecurityAuditDetailView.tsx` (score ring, severity/finding
+counts, filterable findings table, triage/ignore, retest, and branded-report generate + share-link + PDF
+controls) wire to the §5b endpoints via `apps/web/src/api/security.ts`. Routes registered at
+`/websites/:id/security-audit` and `/websites/:id/security-audit/:runId`; detail header + row actions added
+in `WebsiteViews.tsx`. Missing design-system classes (form/metric/modal/util, `.dashboardSplit`) added to
+`styles.css` using existing tokens. Verified by `tests/e2e/vaultguard.spec.ts` (green): signup → add site →
+FREE-plan 403 guard → PRO upgrade → UI-triggered run → QUEUED + COMPLETED detail render, no uncaught errors.
+
 ## 6. Legal & safety guardrails (non-negotiable)
 
 1. Scan **only verified-owned** domains (DNS TXT / meta-tag proof) + explicit ToS consent.
@@ -324,7 +335,7 @@ customer fixes the bugs that actually get exploited against them first.
 
 | Feature ID | Feature Name | Status | Test Suite | Notes |
 |---|---|:---:|---|---|
-| **LG-038** | VaultGuard Security Audit | `IN_PROGRESS` | `tests/security/vaultguard-*.test.ts` | Phase A scanners + registry + `VaultAuditRun`/`VaultAuditFinding` tables done; §5b API surface shipped (`/websites/:id/security-audit` POST/GET, findings, retest, PATCH finding, evidence) |
+| **LG-038** | VaultGuard Security Audit | `IN_PROGRESS` | `tests/security/vaultguard-*.test.ts` + `tests/e2e/vaultguard.spec.ts` | Phase A scanners + registry + `VaultAuditRun`/`VaultAuditFinding` tables done; §5b API surface shipped (`/websites/:id/security-audit` POST/GET, findings, retest, PATCH finding, evidence, branded report, webhook) + frontend UI (`SecurityAuditView`/`SecurityAuditDetailView`, CSS classes) + e2e green |
 | **LG-039** | VaultGuard AI Remediation | `PLANNED` | `tests/security/vaultguard-remediation.test.ts` | Cached Hinglish fix-guidance per detection key |
 | **LG-040** | VaultGuard Retest & Verified Loop | `PLANNED` | `tests/security/vaultguard-retest.test.ts` | OPEN-finding re-run + status transitions + ignore-audit |
 

@@ -8,8 +8,7 @@ import { Input } from '../../components/ui/Input.js';
 import { Badge } from '../../components/ui/Badge.js';
 import { Card } from '../../components/ui/Card.js';
 import { EmptyState, Skeleton } from '../../components/ui/States.js';
-import { IconWebsites, IconAudits, IconExternalLink, IconPlus, IconArrowRight } from '../../components/ui/Icons.js';
-
+import { IconWebsites, IconAudits, IconExternalLink, IconPlus, IconArrowRight, IconShield } from '../../components/ui/Icons.js';
 export function WebsiteListView() {
   const navigate = useNavigate();
   const { websites, isLoading, createWebsite, isCreating } = useWebsites();
@@ -142,6 +141,9 @@ export function WebsiteListView() {
                         <Link to={`/websites/${site.id}`} className="btn btn-outline btn-sm">
                           History
                         </Link>
+                        <Link to={`/websites/${site.id}/security-audit`} className="btn btn-outline btn-sm">
+                          Security
+                        </Link>
                       </div>
                     </td>
                   </tr>
@@ -241,9 +243,14 @@ export function WebsiteDetailView() {
             {website.url} • Registered on {new Date(website.createdAt).toLocaleDateString()}
           </p>
         </div>
-        <Button variant="primary" onClick={handleStartAudit} isLoading={isStarting}>
-          <IconAudits size={16} /> Run Diagnostic Audit
-        </Button>
+        <div className="btnGroup">
+          <Link to={`/websites/${website.id}/security-audit`} className="btn btn-outline">
+            <IconShield size={16} /> Security Audit
+          </Link>
+          <Button variant="primary" onClick={handleStartAudit} isLoading={isStarting}>
+            <IconAudits size={16} /> Run Diagnostic Audit
+          </Button>
+        </div>
       </div>
 
       <Card className="tableCard">
