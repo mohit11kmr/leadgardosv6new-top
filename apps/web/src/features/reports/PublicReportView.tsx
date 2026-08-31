@@ -89,8 +89,11 @@ export function PublicReportView() {
 
   const snapshot = data.snapshot || {};
   const branding = snapshot.branding || { companyName: 'LeadGuard OS' };
-  const score = snapshot.score || { overall: 70, lead: 70, advertising: 70, seo: 70, security: 70 };
+  const score = snapshot.score as
+    | { overall: number; lead: number; advertising: number; seo: number; security: number }
+    | undefined;
   const findings = snapshot.findings || [];
+  const scoreOrNA = (v: number | undefined) => (typeof v === 'number' ? v : 'N/A');
 
   return (
     <div className="publicReportLayout">
@@ -113,36 +116,45 @@ export function PublicReportView() {
         </div>
 
         {/* Score Card */}
-        <div className="publicScoreCard">
-          <div className="scoreCircle">
-            <div className="scoreNumber">{score.overall}</div>
-            <div className="scoreMax">/ 100</div>
-          </div>
-          <div className="scoreDetails">
-            <h3>Overall Conversion Health Score</h3>
-            <p className="text-muted">
-              Based on comprehensive evaluation of inbound lead capture forms, pixel telemetry, SEO readiness, and security TLS.
-            </p>
-            <div className="scoreSubGrid">
-              <div>
-                <strong>{score.lead}/100</strong>
-                <span>Lead Capture</span>
-              </div>
-              <div>
-                <strong>{score.advertising}/100</strong>
-                <span>Advertising</span>
-              </div>
-              <div>
-                <strong>{score.seo}/100</strong>
-                <span>SEO</span>
-              </div>
-              <div>
-                <strong>{score.security}/100</strong>
-                <span>Security</span>
+        {score ? (
+          <div className="publicScoreCard">
+            <div className="scoreCircle">
+              <div className="scoreNumber">{scoreOrNA(score.overall)}</div>
+              <div className="scoreMax">/ 100</div>
+            </div>
+            <div className="scoreDetails">
+              <h3>Overall Conversion Health Score</h3>
+              <p className="text-muted">
+                Based on comprehensive evaluation of inbound lead capture forms, pixel telemetry, SEO readiness, and security TLS.
+              </p>
+              <div className="scoreSubGrid">
+                <div>
+                  <strong>{scoreOrNA(score.lead)}/100</strong>
+                  <span>Lead Capture</span>
+                </div>
+                <div>
+                  <strong>{scoreOrNA(score.advertising)}/100</strong>
+                  <span>Advertising</span>
+                </div>
+                <div>
+                  <strong>{scoreOrNA(score.seo)}/100</strong>
+                  <span>SEO</span>
+                </div>
+                <div>
+                  <strong>{scoreOrNA(score.security)}/100</strong>
+                  <span>Security</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="publicScoreCard">
+            <div className="scoreDetails">
+              <h3>Diagnostic Scores</h3>
+              <p className="text-muted">Scores are not available for this report snapshot.</p>
+            </div>
+          </div>
+        )}
 
         {/* Prioritized Actionable Recommendations */}
         <div className="publicFindingsSection">

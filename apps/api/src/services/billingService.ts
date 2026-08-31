@@ -209,6 +209,8 @@ export class BillingService {
   ) {
     const amountInPaise = 299900; // Authoritative server-side price (₹2,999)
 
+    await this.assertExpressFixOwnership(organizationId, userId, websiteId, auditId);
+
     // Idempotency: return existing order if same key was provided recently
     if (idempotencyKey) {
       const existingEvent = await db.billingEvent.findFirst({
@@ -284,6 +286,9 @@ export class BillingService {
       auditId?: string;
     }
   ) {
+    // 0. Ownership: the requested website (and optional audit) must belong to the org
+    await this.assertExpressFixOwnership(organizationId, userId, input.websiteId, input.auditId);
+
     // 1. Verify cryptographic signature
     const isValid = razorpayProvider.verifyPaymentSignature({
       orderId: input.orderId,
@@ -374,6 +379,46 @@ export class BillingService {
     );
 
     return { payment, invoice, duplicate: false };
+  }
+
+  /**
+   * Ensures the website (and optional audit) referenced by an Express Fix checkout
+   * actually belongs to the requesting organization. Prevents cross-tenant billing
+   * and fulfillment (IDOR).
+   */
+  private async assertExpressFixOwnership(
+    organizationId: string,
+    userId: string,
+    websiteId: string,
+    auditId?: string
+  ) {
+    const website = await db.website.findFirst({
+      where: { id: websiteId, organizationId },
+      select: { id: true },
+    });
+    if (!website) {
+      await recordSecurityEvent('SUSPICIOUS_PAYMENT_OWNERSHIP', userId, null, {
+        organizationId,
+        websiteId,
+        reason: 'WEBSITE_NOT_IN_ORG',
+      });
+      throw new Error('Website not found or does not belong to organization');
+    }
+    if (auditId) {
+      const audit = await db.audit.findFirst({
+        where: { id: auditId, organizationId },
+        select: { id: true },
+      });
+      if (!audit) {
+        await recordSecurityEvent('SUSPICIOUS_PAYMENT_OWNERSHIP', userId, null, {
+          organizationId,
+          websiteId,
+          auditId,
+          reason: 'AUDIT_NOT_IN_ORG',
+        });
+        throw new Error('Audit not found or does not belong to organization');
+      }
+    }
   }
 
   /**

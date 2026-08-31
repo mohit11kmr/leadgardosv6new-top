@@ -25,9 +25,12 @@ export function ReportDetailView() {
   if (error || !data) return <div className="errorBanner">{(error as Error)?.message || 'Report not found'}</div>;
 
   const snapshot = data.snapshotData || {};
-  const score = snapshot.score || { overall: 70, lead: 70, advertising: 70, seo: 70, security: 70 };
+  const score = snapshot.score as
+    | { overall: number; lead: number; advertising: number; seo: number; security: number }
+    | undefined;
   const findings = snapshot.findings || [];
   const branding = snapshot.branding || { companyName: 'LeadGuard' };
+  const scoreOrNA = (v: number | undefined) => (typeof v === 'number' ? `${v} / 100` : 'Not available');
 
   return (
     <div className="viewContainer">
@@ -52,27 +55,27 @@ export function ReportDetailView() {
       <div className="statsGrid">
         <div className="statCard primary">
           <div className="statLabel">Overall Health</div>
-          <div className="statValue">{score.overall} / 100</div>
-          <div className="statSub">Status: {snapshot.businessImpact?.conversionHealth || 'HEALTHY'}</div>
+          <div className="statValue">{scoreOrNA(score?.overall)}</div>
+          <div className="statSub">Status: {snapshot.businessImpact?.conversionHealth ?? 'Not available'}</div>
         </div>
         <div className="statCard">
           <div className="statLabel">Lead Capture</div>
-          <div className="statValue">{score.lead} / 100</div>
+          <div className="statValue">{scoreOrNA(score?.lead)}</div>
           <div className="statSub">Inbound readiness</div>
         </div>
         <div className="statCard">
           <div className="statLabel">Advertising / Tracking</div>
-          <div className="statValue">{score.advertising} / 100</div>
+          <div className="statValue">{scoreOrNA(score?.advertising)}</div>
           <div className="statSub">Attribution & Pixels</div>
         </div>
         <div className="statCard">
           <div className="statLabel">SEO & Metadata</div>
-          <div className="statValue">{score.seo} / 100</div>
+          <div className="statValue">{scoreOrNA(score?.seo)}</div>
           <div className="statSub">Search visibility</div>
         </div>
         <div className="statCard">
           <div className="statLabel">Security & TLS</div>
-          <div className="statValue">{score.security} / 100</div>
+          <div className="statValue">{scoreOrNA(score?.security)}</div>
           <div className="statSub">Headers & Certificates</div>
         </div>
       </div>

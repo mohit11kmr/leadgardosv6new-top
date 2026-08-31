@@ -107,7 +107,7 @@ export function TestimonialsView() {
                       <strong>{t.authorName}</strong>
                       <div className="text-muted text-xs">
                         {t.role ? `${t.role}, ` : ''}
-                        {t.companyName || 'Verified Client'}
+                        {t.companyName ? `${t.companyName}` : '—'}
                       </div>
                     </td>
                     <td>{'⭐'.repeat(t.rating)}</td>

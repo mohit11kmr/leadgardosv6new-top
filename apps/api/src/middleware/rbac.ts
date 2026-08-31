@@ -76,7 +76,7 @@ const PERMISSION_MATRIX: Record<Capability, RoleType[]> = {
   BILLING_ADMIN: ['OWNER'],
   WEBHOOK_MANAGE: ['OWNER', 'ADMIN'],
   TESTIMONIAL_MANAGE: ['OWNER', 'ADMIN', 'AGENCY_ADMIN'],
-  SETTINGS_MANAGE: ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER', 'AGENCY_ADMIN', 'AGENCY_MEMBER'],
+  SETTINGS_MANAGE: ['OWNER', 'ADMIN'],
 };
 
 export function hasPermission(role: RoleType, capability: Capability): boolean {

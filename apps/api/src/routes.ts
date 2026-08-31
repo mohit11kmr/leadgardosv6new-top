@@ -69,7 +69,7 @@ export type AuthRequest = Request & {
   rawBody?: string;
 };
 
-export function requireAuth(request: AuthRequest, response: Response, next: NextFunction) {
+export async function requireAuth(request: AuthRequest, response: Response, next: NextFunction) {
   const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) {
     return response.status(401).json({
@@ -78,14 +78,37 @@ export function requireAuth(request: AuthRequest, response: Response, next: Next
     });
   }
   try {
-    request.auth = jwt.verify(token, config.JWT_SECRET) as Claims;
-    next();
+    request.auth = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as Claims;
   } catch {
-    response.status(401).json({
+    return response.status(401).json({
       success: false,
       error: { code: 'INVALID_TOKEN', message: 'Invalid access token', requestId: requestId(request) },
     });
   }
+
+  const [user, organization] = await Promise.all([
+    db.user.findUnique({
+      where: { id: request.auth.sub },
+      select: { id: true, isDisabled: true },
+    }),
+    db.organization.findUnique({
+      where: { id: request.auth.organizationId },
+      select: { id: true, isSuspended: true, deletedAt: true },
+    }),
+  ]);
+
+  if (!user || user.isDisabled || !organization || organization.isSuspended || organization.deletedAt) {
+    return response.status(403).json({
+      success: false,
+      error: {
+        code: 'ACCOUNT_INACTIVE',
+        message: 'Account is inactive. Contact support.',
+        requestId: requestId(request),
+      },
+    });
+  }
+
+  next();
 }
 
 function requestId(request: Request) {
@@ -281,7 +304,7 @@ apiRouter.post('/auth/login', authLimiter, async (request, response, next) => {
 
     const clientIp = getClientIp(request);
 
-    if (!user || !(await verifyPassword(user.passwordHash, input.password)) || !user.memberships[0]) {
+    if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
       await recordSecurityEvent('LOGIN_FAILURE', user?.id, clientIp, { email: input.email });
       return response.status(401).json({
         success: false,
@@ -289,7 +312,19 @@ apiRouter.post('/auth/login', authLimiter, async (request, response, next) => {
       });
     }
 
-    const organizationId = user.memberships[0].organizationId;
+    const activeMembership = user.memberships.find(
+      (m) => m.organization && !m.organization.isSuspended && !m.organization.deletedAt
+    );
+
+    if (user.isDisabled || !activeMembership) {
+      await recordSecurityEvent('LOGIN_FAILURE', user.id, clientIp, { email: input.email, reason: 'ACCOUNT_INACTIVE' });
+      return response.status(403).json({
+        success: false,
+        error: { code: 'ACCOUNT_INACTIVE', message: 'Account is inactive. Contact support.', requestId: requestId(request) },
+      });
+    }
+
+    const organizationId = activeMembership.organizationId;
     const refreshToken = createRefreshToken();
     const userAgent = request.headers['user-agent'] || null;
 
@@ -310,7 +345,7 @@ apiRouter.post('/auth/login', authLimiter, async (request, response, next) => {
       success: true,
       data: {
         user: toUserDto(user),
-        organization: toOrganizationDto(user.memberships[0].organization),
+        organization: toOrganizationDto(activeMembership.organization),
         accessToken: createAccessToken(user.id, organizationId),
       },
     });
@@ -319,12 +354,10 @@ apiRouter.post('/auth/login', authLimiter, async (request, response, next) => {
   }
 });
 
-apiRouter.post('/auth/refresh', async (request, response, next) => {
+apiRouter.post('/auth/refresh', authLimiter, async (request, response, next) => {
   try {
     const cookies = parseCookies(request.headers.cookie);
-    const token =
-      cookies[REFRESH_COOKIE_NAME] ||
-      (typeof request.body === 'object' && request.body?.refreshToken ? String(request.body.refreshToken) : null);
+    const token = cookies[REFRESH_COOKIE_NAME] ?? null;
 
     if (!token) {
       clearRefreshCookie(response);
@@ -362,16 +395,31 @@ apiRouter.post('/auth/refresh', async (request, response, next) => {
 
     const session = await db.session.findUnique({
       where: { refreshTokenHash: tokenHash },
-      include: { user: { include: { memberships: true } } },
+      include: { user: { include: { memberships: { include: { organization: true } } } } },
     });
 
-    if (!session || session.revokedAt || session.expiresAt < new Date() || !session.user.memberships[0]) {
+    const activeMembership = session?.user.memberships.find(
+      (m) => m.organization && !m.organization.isSuspended && !m.organization.deletedAt
+    );
+
+    if (
+      !session ||
+      session.revokedAt ||
+      session.expiresAt < new Date() ||
+      session.user.isDisabled ||
+      !activeMembership
+    ) {
       clearRefreshCookie(response);
+      await recordSecurityEvent('REFRESH_REJECTED', session?.userId, clientIp, {
+        reason: !session ? 'NO_SESSION' : session.user.isDisabled ? 'ACCOUNT_DISABLED' : 'ORG_INACTIVE',
+      });
       return response.status(401).json({
         success: false,
         error: { code: 'INVALID_REFRESH_TOKEN', message: 'Refresh token is invalid or expired', requestId: requestId(request) },
       });
     }
+
+    const sessionOrganizationId = activeMembership.organizationId as string;
 
     // Refresh Token Rotation
     const replacement = createRefreshToken();
@@ -393,7 +441,7 @@ apiRouter.post('/auth/refresh', async (request, response, next) => {
     response.json({
       success: true,
       data: {
-        accessToken: createAccessToken(session.userId, session.user.memberships[0].organizationId),
+        accessToken: createAccessToken(session.userId, sessionOrganizationId),
       },
     });
   } catch (error) {
@@ -401,12 +449,10 @@ apiRouter.post('/auth/refresh', async (request, response, next) => {
   }
 });
 
-apiRouter.post('/auth/logout', async (request, response, next) => {
+apiRouter.post('/auth/logout', authLimiter, async (request, response, next) => {
   try {
     const cookies = parseCookies(request.headers.cookie);
-    const token =
-      cookies[REFRESH_COOKIE_NAME] ||
-      (typeof request.body === 'object' && request.body?.refreshToken ? String(request.body.refreshToken) : null);
+    const token = cookies[REFRESH_COOKIE_NAME] ?? null;
 
     if (token) {
       const tokenHash = hashRefreshToken(token);

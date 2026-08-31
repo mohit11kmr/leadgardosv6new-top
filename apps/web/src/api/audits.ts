@@ -1,4 +1,4 @@
-import { apiClient } from './client.js';
+import { apiClient, ApiError, accessTokenKey } from './client.js';
 import type { FindingEvidence } from '@leadguard/shared';
 
 export interface Score {
@@ -148,10 +148,22 @@ export async function getAuditFindings(id: string, filters: FindingsFilterParams
   if (filters.cursor) params.set('cursor', filters.cursor);
 
   const query = params.toString() ? `?${params.toString()}` : '';
-  const res = await apiClient<{ data: Finding[]; meta: PaginatedFindingsResponse['meta'] }>(
-    `/audits/${id}/findings${query}`
-  );
-  return { data: (res as unknown as Finding[]) || res.data, meta: res.meta };
+  const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api/v1';
+  const token = localStorage.getItem(accessTokenKey);
+  const res = await fetch(`${baseUrl}/audits/${id}/findings${query}`, {
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    credentials: 'include',
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.success) {
+    throw new ApiError(
+      body.error?.message ?? 'Request failed',
+      body.error?.code ?? 'API_ERROR',
+      res.status,
+      body.error?.requestId
+    );
+  }
+  return { data: body.data as Finding[], meta: body.meta as PaginatedFindingsResponse['meta'] };
 }
 
 export async function getAuditPages(id: string): Promise<AuditPage[]> {

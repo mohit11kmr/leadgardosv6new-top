@@ -159,6 +159,8 @@ app.use(
       mapped = codeMap.CONFLICT;
     } else if (error instanceof Error && codeMap[error.message]) {
       mapped = codeMap[error.message];
+    } else if (error instanceof Error && /(not found|does not exist|does not match)/i.test(error.message)) {
+      mapped = { status: 404, code: 'NOT_FOUND', message: 'Resource not found' };
     } else {
       mapped = { status: 500, code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' };
     }
