@@ -643,6 +643,7 @@ model MonitoringRun {
   @@unique([monitoringConfigId, scheduledSlot])
   @@index([monitoringConfigId, createdAt])
   @@index([organizationId, createdAt])
+  @@index([createdAt])
 }
 
 model MonitoringFinding {
@@ -669,6 +670,7 @@ model MonitoringFinding {
   @@index([monitoringConfigId, detectedAt])
   @@index([monitoringConfigId, affectedUrl])
   @@index([monitoringRunId, changeType])
+  @@index([detectedAt])
 }
 
 model MonitoringAlert {
@@ -1122,6 +1124,7 @@ model ApiUsage {
 
   @@index([organizationId, timestamp])
   @@index([apiKeyId, timestamp])
+  @@index([timestamp])
 }
 
 model WebhookDelivery {
@@ -1143,6 +1146,7 @@ model WebhookDelivery {
 
   @@index([webhookEndpointId, createdAt])
   @@index([organizationId, createdAt])
+  @@index([createdAt])
 }
 
 model OutboxEvent {
