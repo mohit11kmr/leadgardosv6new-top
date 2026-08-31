@@ -61,11 +61,12 @@ describe('Watchdog Security: Route Hardening, Cross-Monitor IDOR & Entitlement P
     });
 
     // Attempting to acknowledge Alert A through Monitor B's URL path -> Must fail!
+    // 404 (not 500): cross-monitor IDOR must hide existence, never leak it
     const ackRes = await request(app)
       .post(`/api/v1/monitoring/${monitorB.id}/alerts/${alertA.id}/ack`)
       .set('Authorization', `Bearer ${token}`);
 
-    expect(ackRes.status).toBe(500);
+    expect(ackRes.status).toBe(404);
 
     // Acknowledging Alert A through Monitor A's URL path -> Must succeed!
     const validAckRes = await request(app)

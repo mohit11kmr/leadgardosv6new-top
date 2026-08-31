@@ -116,6 +116,7 @@ export class MonitoringScheduler {
           },
         ],
       },
+      orderBy: { nextRunAt: 'asc' },
       take: 50,
     });
 

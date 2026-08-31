@@ -189,23 +189,29 @@ export class EntitlementService {
     decrement = 1
   ) {
     const period = this.getCurrentPeriod();
-    const current = await db.usageRecord.findUnique({
+
+    // Atomic decrement — prevents read-then-write race (C3 audit finding).
+    // Only decrements if count >= decrement to avoid underflow.
+    const updated = await db.usageRecord.updateMany({
       where: {
-        organizationId_period_metric: {
-          organizationId,
-          period,
-          metric,
-        },
+        organizationId,
+        period,
+        metric,
+        count: { gte: decrement },
+      },
+      data: {
+        count: { decrement },
       },
     });
 
-    if (!current) return null;
+    if (updated.count === 0) return null;
 
-    const count = Math.max(0, current.count - decrement);
-    if (count === 0) {
-      return db.usageRecord.delete({ where: { id: current.id } });
-    }
-    return db.usageRecord.update({ where: { id: current.id }, data: { count } });
+    // Clean up zero-count records (non-blocking best-effort)
+    await db.usageRecord.deleteMany({
+      where: { organizationId, period, metric, count: 0 },
+    });
+
+    return updated;
   }
 
   async canRunAudit(organizationId: string): Promise<{ allowed: boolean; reason?: string }> {

@@ -200,12 +200,16 @@ export async function processPdfJob(job: Job<PdfJobData>) {
 
   const report = await db.report.findFirst({
     where: { id: reportId, organizationId },
-    include: {
+    select: {
+      id: true,
+      title: true,
+      version: true,
+      createdAt: true,
+      pdfStatus: true,
+      snapshotData: true,
       audit: {
-        include: {
-          website: true,
-          score: true,
-          findings: true,
+        select: {
+          website: { select: { url: true } },
         },
       },
     },

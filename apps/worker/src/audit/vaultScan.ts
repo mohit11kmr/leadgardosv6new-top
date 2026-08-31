@@ -40,10 +40,28 @@ export async function processVaultScan(
     };
   }
 
-  await db.vaultAuditRun.update({
-    where: { id: run.id },
+  // Atomic claim (C8): only transitions a QUEUED/RUNNING run to RUNNING; returns
+  // early if another worker already finalised it meanwhile (e.g. stalled-job retry).
+  const claimed = await db.vaultAuditRun.updateMany({
+    where: {
+      id: run.id,
+      status: { in: ['QUEUED', 'RUNNING'] },
+    },
     data: { status: 'RUNNING', startedAt: new Date() },
   });
+
+  if (claimed.count === 0) {
+    return {
+      status: 'CANCELLED',
+      runId: run.id,
+      pages: 0,
+      findings: 0,
+      score: 0,
+      retestedFindings: 0,
+      fixedFindings: 0,
+      riskCounts: {},
+    };
+  }
 
   const globalTimeoutMs = options?.globalTimeoutMs ?? Number(process.env.MAX_VAULT_DURATION_MS ?? 120_000);
   const timeoutController = new AbortController();

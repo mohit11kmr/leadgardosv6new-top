@@ -38,8 +38,12 @@ export class AuditOrchestrator {
       },
     });
 
-    await db.audit.update({
-      where: { id: auditId },
+    // 3. Claim the audit atomically (C8): refuses to run a CANCELLED/COMPLETED audit
+    const claimed = await db.audit.updateMany({
+      where: {
+        id: auditId,
+        status: { notIn: ['CANCELLED', 'COMPLETED'] },
+      },
       data: {
         status: 'RUNNING',
         startedAt: audit.startedAt ?? new Date(),
@@ -47,6 +51,10 @@ export class AuditOrchestrator {
         progress: 5,
       },
     });
+
+    if (claimed.count === 0) {
+      throw new Error(`Audit cannot be started: current status is not eligible (status=${audit.status})`);
+    }
 
     const globalTimeoutMs = options?.globalTimeoutMs ?? Number(process.env.MAX_AUDIT_DURATION_MS ?? 60_000);
     const timeoutController = new AbortController();

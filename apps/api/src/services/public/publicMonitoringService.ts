@@ -151,15 +151,41 @@ export class PublicMonitoringService {
     }
 
     // Create database monitoring run record
-    const run = await db.monitoringRun.create({
-      data: {
-        monitoringConfigId: monitor.id,
-        websiteId: monitor.websiteId,
-        organizationId,
-        idempotencyKey: idempotencyKey || null,
-        status: 'QUEUED',
-      },
-    });
+    let run;
+    try {
+      run = await db.monitoringRun.create({
+        data: {
+          monitoringConfigId: monitor.id,
+          websiteId: monitor.websiteId,
+          organizationId,
+          idempotencyKey: idempotencyKey || null,
+          status: 'QUEUED',
+        },
+      });
+    } catch (error: any) {
+      // C14: concurrent same-key requests — unique(monitoringConfigId, idempotencyKey) is the real guard
+      if (error?.code === 'P2002' && idempotencyKey) {
+        const existingRun = await db.monitoringRun.findFirst({
+          where: {
+            monitoringConfigId: monitor.id,
+            idempotencyKey,
+          },
+        });
+        if (existingRun) {
+          const monitorCheck = await db.monitoringConfig.findFirst({
+            where: { id: monitor.id, organizationId },
+            include: { website: true },
+          });
+          return {
+            jobId: existingRun.id,
+            status: existingRun.status,
+            websiteUrl: monitorCheck?.website?.url ?? monitor.website.url,
+            reused: true,
+          };
+        }
+      }
+      throw error;
+    }
 
     const job = await monitoringQueue.add(
       'execute-monitor',

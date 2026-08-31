@@ -470,6 +470,7 @@ model VaultAuditFinding {
   run                VaultAuditRun?   @relation("VaultAuditRunFindings", fields: [runId], references: [id], onDelete: Cascade)
   ignoredBy          User?            @relation(fields: [ignoredById], references: [id], onDelete: SetNull)
 
+  @@unique([websiteId, scannerKey, normalizedIssueKey])
   @@index([websiteId, normalizedIssueKey, status])
   @@index([auditId, severity])
   @@index([websiteId, status])
@@ -848,6 +849,7 @@ model BillingEvent {
   createdAt       DateTime     @default(now())
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@unique([type, providerEventId])
   @@index([organizationId, createdAt])
   @@index([providerEventId])
 }

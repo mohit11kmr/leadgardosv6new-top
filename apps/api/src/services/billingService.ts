@@ -317,8 +317,9 @@ export class BillingService {
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
     const amountInPaise = 299900; // Authoritative price
 
-    const { payment, invoice } = await db.$transaction(
-      async (tx) => {
+    try {
+      const { payment, invoice } = await db.$transaction(
+        async (tx) => {
         const payment = await tx.payment.create({
           data: {
             organizationId,
@@ -379,6 +380,16 @@ export class BillingService {
     );
 
     return { payment, invoice, duplicate: false };
+    } catch (error: any) {
+      // C7: concurrent duplicate-verification — real guard is the unique constraint
+      if (error?.code === 'P2002') {
+        const dup = await db.payment.findUnique({
+          where: { providerPaymentId: input.paymentId },
+        });
+        if (dup) return { payment: dup, duplicate: true };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -970,6 +981,10 @@ export class BillingService {
     const invoiceNumber = `INV-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
     const amountInPaise = 299900; // Authoritative price
 
+    let createdPayment: any;
+    let createdInvoice: any;
+    let createdFulfillmentId: string | undefined;
+    try {
     const { payment, invoice, fulfillmentId } = await db.$transaction(
       async (tx) => {
         const payment = await tx.payment.create({
@@ -994,7 +1009,6 @@ export class BillingService {
             },
           },
         });
-
         const invoice = await tx.invoice.create({
           data: {
             organizationId: systemGuestOrgId,
@@ -1040,6 +1054,19 @@ export class BillingService {
       },
       { maxWait: 5000, timeout: 10000 }
     );
+      createdPayment = payment;
+      createdInvoice = invoice;
+      createdFulfillmentId = fulfillmentId;
+    } catch (error: any) {
+      // C7: concurrent duplicate-verification — real guard is the unique constraint
+      if (error?.code === 'P2002') {
+        const dup = await db.payment.findUnique({
+          where: { providerPaymentId: paymentId },
+        });
+        if (dup) return { payment: dup, duplicate: true, fulfillmentId: null };
+      }
+      throw error;
+    }
 
     // Link the captured payment to the captured sales lead (if present)
     if (orderData.customerEmail) {
@@ -1051,8 +1078,8 @@ export class BillingService {
         name: orderData.customerName,
       });
       await leadService.linkPayment(lead.id, paymentId);
-      if (fulfillmentId) {
-        await leadService.linkFulfillment(lead.id, fulfillmentId);
+      if (createdFulfillmentId) {
+        await leadService.linkFulfillment(lead.id, createdFulfillmentId);
       }
     }
 
@@ -1078,7 +1105,7 @@ export class BillingService {
       organizationId: systemGuestOrgId,
     }));
 
-    return { payment, invoice, duplicate: false, fulfillmentId: fulfillmentRecord?.id ?? null };
+    return { payment: createdPayment, invoice: createdInvoice, duplicate: false, fulfillmentId: fulfillmentRecord?.id ?? null };
   }
 
   /**
@@ -1197,19 +1224,34 @@ export class BillingService {
 
     // 4. Process event based on type
     if (organizationId) {
-      await db.$transaction(async (tx) => {
-        await this.processWebhookTransaction(
-          tx,
-          organizationId,
-          eventId,
-          eventType,
-          eventPayload,
-          payloadData,
-          paymentEntity,
-          subscriptionEntity,
-          paymentNotes
-        );
-      });
+      try {
+        await db.$transaction(async (tx) => {
+          await this.processWebhookTransaction(
+            tx,
+            organizationId,
+            eventId,
+            eventType,
+            eventPayload,
+            payloadData,
+            paymentEntity,
+            subscriptionEntity,
+            paymentNotes
+          );
+        });
+      } catch (error: any) {
+        // C5: concurrent duplicate deliveries — unique(type, providerEventId) is the real guard
+        if (error?.code === 'P2002') {
+          console.log(JSON.stringify({
+            level: 'info',
+            service: 'billing',
+            event: 'razorpay_webhook_duplicate',
+            eventId,
+            eventType,
+          }));
+          return { received: true, duplicate: true };
+        }
+        throw error;
+      }
     }
 
     return { received: true, duplicate: false };

@@ -60,23 +60,24 @@ export class SettingsService {
    * Gets notification preferences for user in organization
    */
   async getNotificationPreferences(userId: string, organizationId: string) {
-    let prefs = await db.notificationPreference.findFirst({
-      where: { userId, organizationId, channel: 'EMAIL' },
-    });
-
-    if (!prefs) {
-      prefs = await db.notificationPreference.create({
-        data: {
+    // C13: upsert instead of racy find-then-create (concurrent first-GET would 500)
+    return db.notificationPreference.upsert({
+      where: {
+        userId_organizationId_channel: {
           userId,
           organizationId,
           channel: 'EMAIL',
-          eventTypes: ['AUDIT_COMPLETED', 'MONITORING_ALERT', 'BILLING_INVOICE'],
-          enabled: true,
         },
-      });
-    }
-
-    return prefs;
+      },
+      create: {
+        userId,
+        organizationId,
+        channel: 'EMAIL',
+        eventTypes: ['AUDIT_COMPLETED', 'MONITORING_ALERT', 'BILLING_INVOICE'],
+        enabled: true,
+      },
+      update: {},
+    });
   }
 
   /**

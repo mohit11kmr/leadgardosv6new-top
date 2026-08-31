@@ -264,20 +264,11 @@ export async function upsertVaultFindings(args: {
   findings: VaultFinding[];
 }): Promise<number> {
   const { auditId, runId, websiteId, findings } = args;
-  let persisted = 0;
+  if (findings.length === 0) return 0;
 
-  for (const finding of findings) {
+  const rows: any[] = findings.map((finding) => {
     const issueKey = finding.normalizedIssueKey ?? finding.internalKey ?? finding.title;
-    const existing = await db.vaultAuditFinding.findFirst({
-      where: {
-        websiteId,
-        normalizedIssueKey: issueKey,
-        status: { in: ['OPEN', 'TRIAGED', 'FIXED', 'VERIFIED'] },
-      },
-      orderBy: { firstSeenAt: 'desc' },
-    });
-
-    const row = {
+    return {
       ...(auditId ? { auditId } : {}),
       ...(runId ? { runId } : {}),
       websiteId,
@@ -287,7 +278,7 @@ export async function upsertVaultFindings(args: {
       title: finding.title,
       description: finding.description,
       status: 'OPEN' as const,
-      evidence: finding.evidence as object,
+      evidence: (finding.evidence ?? {}) as object,
       affectedUrl: finding.affectedUrl ?? null,
       recommendation: finding.recommendation,
       scoreImpact: finding.scoreImpact,
@@ -296,19 +287,26 @@ export async function upsertVaultFindings(args: {
       cvssScore: finding.cvssScore ?? null,
       lastSeenAt: new Date(),
     };
+  });
 
-    if (existing) {
-      if (existing.status !== 'VERIFIED_IGNORED') {
-        await db.vaultAuditFinding.update({
-          where: { id: existing.id },
-          data: { ...row, firstSeenAt: existing.firstSeenAt },
-        });
-      }
-    } else {
-      await db.vaultAuditFinding.create({ data: row });
-    }
-    persisted += 1;
-  }
+  // C6: atomic single-pass upsert (no N+1 read-then-write, no duplicate-insert race).
+  // createMany w/ skipDuplicates inserts only brand-new rows; the updateMany below
+  // re-opens previously FIXED/VERIFIED rows to OPEN, but never resurrects VERIFIED_IGNORED.
+  const created = await db.vaultAuditFinding.createMany({
+    data: rows,
+    skipDuplicates: true,
+  });
 
-  return persisted;
+  const issueKeys = rows.map((r) => r.normalizedIssueKey);
+  await db.vaultAuditFinding.updateMany({
+    where: {
+      websiteId,
+      normalizedIssueKey: { in: issueKeys },
+      status: { not: 'VERIFIED_IGNORED' },
+      NOT: { status: 'OPEN' },
+    },
+    data: { status: 'OPEN', lastSeenAt: new Date() },
+  });
+
+  return rows.length;
 }
