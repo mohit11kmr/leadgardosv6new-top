@@ -27,7 +27,8 @@ export type OutboxEventType =
   | 'REPORT_READY'
   | 'PAYMENT_SUCCEEDED'
   | 'SUBSCRIPTION_CHANGED'
-  | 'VAULT_AUDIT_COMPLETED';
+  | 'VAULT_AUDIT_COMPLETED'
+  | 'VAULT_REPORT_READY';
 
 export class OutboxService {
   /**

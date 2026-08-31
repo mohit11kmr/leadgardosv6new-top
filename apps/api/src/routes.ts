@@ -1670,6 +1670,67 @@ apiRouter.get(
   }
 );
 
+// Generate a branded (white-label) security report from a completed vault run (LG-006/LG-007)
+apiRouter.post(
+  '/websites/:websiteId/security-audit/:runId/report',
+  requirePermission('REPORT_CREATE'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const run = await db.vaultAuditRun.findFirst({
+        where: { id: request.params.runId, websiteId: website.id, organizationId: request.auth!.organizationId },
+        select: { id: true },
+      });
+      if (!run) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Security audit run not found', requestId: requestId(request) },
+        });
+      }
+
+      const { title, clientWorkspaceId, templateVersion } = request.body ?? {};
+      const report = await reportService.createVaultReportSnapshot(
+        request.auth!.organizationId,
+        run.id,
+        { title, clientWorkspaceId, templateVersion }
+      );
+      response.status(201).json({ success: true, data: report });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/websites/:websiteId/security-audit/:runId/report',
+  requirePermission('REPORT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const report = await db.report.findFirst({
+        where: {
+          vaultRunId: request.params.runId,
+          organizationId: request.auth!.organizationId,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!report) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Security report not found', requestId: requestId(request) },
+        });
+      }
+      response.json({ success: true, data: report });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // --- Intelligence Endpoints (RBAC: AUDIT_VIEW) ---
 apiRouter.get('/audits/:id/score/explanation', requirePermission('AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
   try {

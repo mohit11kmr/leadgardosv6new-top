@@ -208,6 +208,17 @@ Definition of done: each scanner ships with a `tests/security/vaultguard-*.test.
 | POST | `/websites/:id/security-audit/:runId/retest` | Re-run in RETEST mode; marks stale OPEN findings FIXED | ✅ implemented |
 | PATCH | `/websites/:id/security-audit/:runId/findings/:findingId` | Set `TRIAGED` / `VERIFIED_IGNORED` (+ reason, audited) | ✅ implemented |
 | GET | `/websites/:id/security-audit/:runId/findings/:findingId/evidence` | Raw evidence blob (response headers / body excerpt) | ✅ implemented |
+| POST | `/websites/:id/security-audit/:runId/report` | Generate branded (white-label) `SECURITY` report snapshot with share-link + PDF reuse | ✅ implemented |
+| GET | `/websites/:id/security-audit/:runId/report` | Fetch the latest branded security report for the run | ✅ implemented |
+
+### Branded security report (LG-006/LG-007 reuse)
+
+`ReportService.createVaultReportSnapshot` produces an immutable branded `SECURITY`
+report from a completed run, storing `snapshotData.reportType='SECURITY'` and linking
+via `Report.vaultRunId` (so it never pollutes the lead-audit `Report` lineage; added
+nullable `Report.auditId` + `Report.vaultRunId`). It reuses `whiteLabelService.resolveBranding`
+(company name, logo, colors, footer) and the existing share-link + PDF machinery.
+Emits `VAULT_REPORT_READY` outbox event.
 
 ### Webhook event
 

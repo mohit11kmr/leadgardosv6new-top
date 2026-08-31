@@ -504,6 +504,7 @@ model VaultAuditRun {
   website          Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
   audit            Audit?         @relation(fields: [auditId], references: [id], onDelete: Cascade)
   findings         VaultAuditFinding[] @relation("VaultAuditRunFindings")
+  reports          Report[]
 
   @@unique([organizationId, idempotencyKey])
   @@index([websiteId, status])
@@ -525,7 +526,8 @@ model AuditScore {
 model Report {
   id              String            @id @default(uuid())
   organizationId  String
-  auditId         String
+  auditId         String?
+  vaultRunId      String?
   title           String            @default("LeadGuard Diagnostic Audit Report")
   version         Int               @default(1)
   reportVersion   String            @default("v1")
@@ -538,12 +540,14 @@ model Report {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @default(now()) @updatedAt
   organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  audit           Audit             @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  audit           Audit?            @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  vaultRun        VaultAuditRun?    @relation(fields: [vaultRunId], references: [id], onDelete: Cascade)
   versions        ReportVersion[]
   shareLinks      ReportShareLink[]
 
   @@index([organizationId, createdAt])
   @@index([auditId])
+  @@index([vaultRunId])
 }
 
 model ReportVersion {

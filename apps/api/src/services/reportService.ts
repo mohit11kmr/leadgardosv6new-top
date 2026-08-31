@@ -91,6 +91,64 @@ export interface ReportSnapshot {
   };
 }
 
+export interface SecurityReportSnapshot {
+  reportVersion: string;
+  templateVersion: string;
+  brandingVersion: string;
+  reportType: 'SECURITY';
+  generatedAt: string;
+  website: {
+    id: string;
+    name: string;
+    url: string;
+  };
+  run: {
+    id: string;
+    mode: string;
+    status: string;
+    score: number;
+    startedAt: string | null;
+    completedAt: string | null;
+    durationMs: number | null;
+    pagesDiscovered: number;
+    pagesFetched: number;
+    pagesFailed: number;
+    retestedFindings: number;
+    fixedFindings: number;
+  };
+  summary: {
+    severityCounts: Record<string, number>;
+    statusCounts: Record<string, number>;
+    topFindings: Array<{
+      title: string;
+      severity: string;
+      affectedUrl: string | null;
+      scoreImpact: number;
+    }>;
+  };
+  findings: Array<{
+    id: string;
+    title: string;
+    description: string;
+    severity: string;
+    status: string;
+    scoreImpact: number;
+    affectedUrl: string | null;
+    recommendation: string;
+    cwe: string | null;
+    cvssScore: number | null;
+  }>;
+  branding: {
+    companyName: string;
+    logoUrl?: string | null;
+    primaryColor: string;
+    secondaryColor: string;
+    website?: string | null;
+    supportEmail?: string | null;
+    footerText?: string | null;
+  };
+}
+
 export class ReportService {
   /**
    * Generates an immutable snapshot of an audit and stores it in the database
@@ -217,6 +275,133 @@ export class ReportService {
         title: report.title,
       }
     );
+
+    return report;
+  }
+
+  /**
+   * Generates an immutable branded (white-label) security report snapshot from a
+   * completed VaultGuard security-audit run (LG-006/LG-007). Uses vaultRunId so it
+   * does not pollute the lead-audit Report lineage.
+   */
+  async createVaultReportSnapshot(
+    organizationId: string,
+    vaultRunId: string,
+    options: {
+      title?: string;
+      clientWorkspaceId?: string;
+      templateVersion?: string;
+    } = {}
+  ) {
+    const run = await db.vaultAuditRun.findFirst({
+      where: { id: vaultRunId, organizationId },
+      include: {
+        website: true,
+        findings: {
+          orderBy: { scoreImpact: 'desc' },
+        },
+      },
+    });
+
+    if (!run || !run.website) {
+      const err = new Error('Security audit run not found');
+      (err as unknown as { code: string }).code = 'RUN_NOT_FOUND';
+      throw err;
+    }
+
+    if (run.status !== 'COMPLETED' && run.status !== 'PARTIAL') {
+      const err = new Error('Security audit run has not completed yet');
+      (err as unknown as { code: string }).code = 'RUN_NOT_COMPLETED';
+      throw err;
+    }
+
+    const branding = await whiteLabelService.resolveBranding(
+      organizationId,
+      options.clientWorkspaceId || run.website.clientWorkspaceId
+    );
+
+    const severityCounts: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
+    const statusCounts: Record<string, number> = {};
+    for (const f of run.findings) {
+      const sev = f.severity.toUpperCase();
+      if (sev in severityCounts) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
+      statusCounts[f.status] = (statusCounts[f.status] ?? 0) + 1;
+    }
+    const topFindings = run.findings
+      .slice(0, 10)
+      .map((f) => ({ title: f.title, severity: f.severity, affectedUrl: f.affectedUrl, scoreImpact: f.scoreImpact }));
+
+    const snapshotData: SecurityReportSnapshot = {
+      reportVersion: 'v1',
+      templateVersion: options.templateVersion || 'v1',
+      brandingVersion: 'v1',
+      reportType: 'SECURITY',
+      generatedAt: new Date().toISOString(),
+      website: {
+        id: run.website.id,
+        name: run.website.name,
+        url: run.website.url,
+      },
+      run: {
+        id: run.id,
+        mode: run.mode,
+        status: run.status,
+        score: run.score,
+        startedAt: run.startedAt ? run.startedAt.toISOString() : null,
+        completedAt: run.completedAt ? run.completedAt.toISOString() : null,
+        durationMs: run.durationMs,
+        pagesDiscovered: run.pagesDiscovered,
+        pagesFetched: run.pagesFetched,
+        pagesFailed: run.pagesFailed,
+        retestedFindings: run.retestedFindings,
+        fixedFindings: run.fixedFindings,
+      },
+      summary: { severityCounts, statusCounts, topFindings },
+      findings: run.findings.map((f) => ({
+        id: f.id,
+        title: f.title,
+        description: f.description,
+        severity: f.severity,
+        status: f.status,
+        scoreImpact: f.scoreImpact,
+        affectedUrl: f.affectedUrl,
+        recommendation: f.recommendation,
+        cwe: f.cwe,
+        cvssScore: f.cvssScore,
+      })),
+      branding: {
+        companyName: branding.companyName || 'LeadGuard',
+        logoUrl: branding.logoUrl,
+        primaryColor: branding.primaryColor || '#2563eb',
+        secondaryColor: branding.secondaryColor || '#1e293b',
+        website: branding.website,
+        supportEmail: branding.supportEmail,
+        footerText: branding.footer,
+      },
+    };
+
+    const title = options.title || `${run.website.name} Security Audit Report`;
+
+    const report = await db.report.create({
+      data: {
+        organizationId,
+        vaultRunId: run.id,
+        title,
+        reportVersion: 'v1',
+        templateVersion: options.templateVersion || 'v1',
+        brandingVersion: 'v1',
+        status: 'READY',
+        snapshotData: snapshotData as any,
+      },
+      include: { shareLinks: true },
+    });
+
+    await outboxService.emitEvent(organizationId, 'VAULT_REPORT_READY', 'VAULT_REPORT', report.id, {
+      reportId: report.id,
+      vaultRunId: run.id,
+      websiteUrl: run.website.url,
+      title: report.title,
+    });
 
     return report;
   }
