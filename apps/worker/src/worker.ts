@@ -10,6 +10,7 @@ import { competitorWorker } from './agency/competitorWorker.js';
 import { pitchWorker } from './agency/pitchWorker.js';
 import { pdfWorker } from './report/pdfWorker.js';
 import { webhookWorker } from './webhook/webhookWorker.js';
+import { replayPendingOutboxEvents } from './webhook/outboxReplay.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -93,9 +94,25 @@ vaultWorker.on('failed', (job, error) =>
   )
 );
 
+// C4: periodic outbox replay — re-dispatches outbox events stuck in PENDING
+// (crash between create and PUBLISHED), guaranteeing eventual webhook delivery.
+const OUTBOX_REPLAY_INTERVAL_MS = Number(process.env.OUTBOX_REPLAY_INTERVAL_MS ?? 60_000);
+const outboxReplayTimer = setInterval(async () => {
+  try {
+    const replayed = await replayPendingOutboxEvents();
+    if (replayed > 0) {
+      console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'outbox_replayed', count: replayed }));
+    }
+  } catch (error: any) {
+    console.error(JSON.stringify({ level: 'error', service: 'worker', event: 'outbox_replay_failed', error: error.message }));
+  }
+}, OUTBOX_REPLAY_INTERVAL_MS);
+outboxReplayTimer.unref();
+
 const handleWorkerShutdown = async (signal: string) => {
   console.log(`Received ${signal}. Shutting down BullMQ workers gracefully...`);
   try {
+    clearInterval(outboxReplayTimer);
     await Promise.allSettled([
       auditWorker.close(),
       monitoringWorker.close(),

@@ -52,6 +52,27 @@ export class OutboxService {
       },
     });
 
+    await this.dispatchEvent(event.id, organizationId, eventType, payload, event.status);
+
+    return event;
+  }
+
+  /**
+   * Finds enabled webhook endpoints matching an event type, enqueues delivery jobs,
+   * and marks the outbox event PUBLISHED. Idempotent with respect to `status` so a
+   * replay never re-dispatches an already-PUBLISHED event.
+   */
+  async dispatchEvent(
+    eventId: string,
+    organizationId: string,
+    eventType: string,
+    payload: Record<string, any>,
+    currentStatus: string
+  ) {
+    if (currentStatus === 'PUBLISHED') {
+      return;
+    }
+
     // Find all matching enabled webhook endpoints
     const endpoints = await db.webhookEndpoint.findMany({
       where: {
@@ -85,14 +106,12 @@ export class OutboxService {
     }
 
     await db.outboxEvent.update({
-      where: { id: event.id },
+      where: { id: eventId },
       data: {
         status: 'PUBLISHED',
         processedAt: new Date(),
       },
     });
-
-    return event;
   }
 }
 
