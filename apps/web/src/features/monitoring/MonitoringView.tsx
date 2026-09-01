@@ -61,6 +61,9 @@ export function MonitoringView() {
       setActionMessage(data.message || 'Watchdog monitoring scan enqueued.');
       queryClient.invalidateQueries({ queryKey: ['monitors-list'] });
     },
+    onError: (err: unknown) => {
+      setActionMessage(err instanceof Error ? err.message : 'Manual scan failed');
+    },
   });
 
   if (loadingMonitors) {

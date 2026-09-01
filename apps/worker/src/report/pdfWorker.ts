@@ -5,6 +5,8 @@ import { db } from '@leadguard/database';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateExternalUrl } from '@leadguard/shared';
+import { chromium } from 'playwright-core';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -40,33 +42,68 @@ export class LocalStorageProvider implements StorageProvider {
 
 export class S3StorageProvider implements StorageProvider {
   private bucket: string;
+  private client: S3Client;
 
-  constructor(bucket = process.env.S3_BUCKET || 'leadguard-reports') {
+  constructor(bucket = config.S3_BUCKET) {
+    // Config validation (packages/config) already refuses to boot with
+    // REPORT_STORAGE=S3 unless S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY are set,
+    // so this never silently falls back to local disk like it used to.
     this.bucket = bucket;
+    this.client = new S3Client({
+      region: config.S3_REGION,
+      credentials: {
+        accessKeyId: config.S3_ACCESS_KEY_ID!,
+        secretAccessKey: config.S3_SECRET_ACCESS_KEY!,
+      },
+    });
   }
 
   async save(filename: string, content: Buffer | string): Promise<string> {
-    // In cloud environment, uploads to S3 compatible object storage
-    // Fallback to local representation if s3 client not configured
-    const local = new LocalStorageProvider();
-    return local.save(filename, content);
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: filename,
+        Body: content,
+        ContentType: filename.endsWith('.pdf') ? 'application/pdf' : 'text/html',
+      })
+    );
+    return this.getUrl(filename);
   }
 
   async get(filename: string): Promise<Buffer> {
-    const local = new LocalStorageProvider();
-    return local.get(filename);
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: filename }));
+    const bytes = await res.Body!.transformToByteArray();
+    return Buffer.from(bytes);
   }
 
   getUrl(filename: string): string {
-    return `https://${this.bucket}.s3.amazonaws.com/${filename}`;
+    return `https://${this.bucket}.s3.${config.S3_REGION}.amazonaws.com/${filename}`;
   }
 }
 
 export function getStorageProvider(): StorageProvider {
-  if (process.env.REPORT_STORAGE === 'S3') {
+  if (config.REPORT_STORAGE === 'S3') {
     return new S3StorageProvider();
   }
   return new LocalStorageProvider();
+}
+
+/**
+ * Renders HTML to a real PDF buffer using a headless Chromium instance
+ * (playwright-core, pointed at the browser binary already provisioned for
+ * the E2E suite). Replaces the previous behavior of writing the raw HTML
+ * string to disk and mislabeling it pdfStatus: READY / pdfPath.
+ */
+export async function renderHtmlToPdf(html: string): Promise<Buffer> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle' });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px' } });
+    return pdf;
+  } finally {
+    await browser.close();
+  }
 }
 
 function escapeHtml(str: string): string {
@@ -256,10 +293,13 @@ export async function processPdfJob(job: Job<PdfJobData>) {
       throw new Error('Rendered HTML exceeds maximum allowed report template size (500KB)');
     }
 
-    // Generate formatted standalone PDF/HTML export artifact
+    // Render an actual PDF binary (previously this wrote the raw HTML string
+    // under a ".html" name while labeling it pdfPath/pdfStatus: READY).
+    const pdfBuffer = await renderHtmlToPdf(renderedHtml);
+
     const storage = getStorageProvider();
-    const filename = `report_${report.id}_v${report.version}.html`;
-    const savedPath = await storage.save(filename, renderedHtml);
+    const filename = `report_${report.id}_v${report.version}.pdf`;
+    const savedPath = await storage.save(filename, pdfBuffer);
 
     await db.report.update({
       where: { id: report.id },

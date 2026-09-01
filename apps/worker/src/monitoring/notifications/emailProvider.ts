@@ -1,3 +1,6 @@
+import nodemailer, { type Transporter } from 'nodemailer';
+import { config } from '@leadguard/config';
+
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -26,4 +29,40 @@ export class ConsoleEmailProvider implements EmailProvider {
   }
 }
 
-export const emailProvider: EmailProvider = new ConsoleEmailProvider();
+export class SmtpEmailProvider implements EmailProvider {
+  private transporter: Transporter;
+
+  constructor() {
+    // packages/config's superRefine already refuses to boot with
+    // EMAIL_PROVIDER=SMTP unless SMTP_HOST/SMTP_USER/SMTP_PASS are set.
+    this.transporter = nodemailer.createTransport({
+      host: config.SMTP_HOST,
+      port: config.SMTP_PORT,
+      secure: config.SMTP_PORT === 465,
+      auth: { user: config.SMTP_USER, pass: config.SMTP_PASS },
+    });
+  }
+
+  async sendEmail(message: EmailMessage): Promise<{ messageId: string; success: boolean }> {
+    const info = await this.transporter.sendMail({
+      from: config.EMAIL_FROM,
+      to: message.to,
+      subject: message.subject,
+      text: message.body,
+    });
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        service: 'worker',
+        event: 'email_sent',
+        messageId: info.messageId,
+        to: message.to,
+        subject: message.subject,
+      })
+    );
+    return { messageId: info.messageId, success: true };
+  }
+}
+
+export const emailProvider: EmailProvider =
+  config.EMAIL_PROVIDER === 'SMTP' ? new SmtpEmailProvider() : new ConsoleEmailProvider();

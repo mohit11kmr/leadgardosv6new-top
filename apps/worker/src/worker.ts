@@ -11,6 +11,8 @@ import { pitchWorker } from './agency/pitchWorker.js';
 import { pdfWorker } from './report/pdfWorker.js';
 import { webhookWorker } from './webhook/webhookWorker.js';
 import { replayPendingOutboxEvents } from './webhook/outboxReplay.js';
+import { monitoringScheduler } from './monitoring/scheduler.js';
+import { monitoringCleaner } from './monitoring/cleanup.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -109,10 +111,30 @@ const outboxReplayTimer = setInterval(async () => {
 }, OUTBOX_REPLAY_INTERVAL_MS);
 outboxReplayTimer.unref();
 
+// Recurring monitoring scheduler — claims and enqueues MonitoringConfigs whose
+// nextRunAt is due. Without this, monitoring never runs on its own schedule.
+monitoringScheduler.start(config.MONITOR_SCHEDULER_INTERVAL_MS);
+
+// Periodic retention cleanup — purges MonitoringRun/MonitoringFinding rows
+// older than MONITOR_RETENTION_DAYS so these tables don't grow unbounded.
+const retentionCleanupTimer = setInterval(async () => {
+  try {
+    const { deletedRuns } = await monitoringCleaner.cleanupOldRuns(config.MONITOR_RETENTION_DAYS);
+    if (deletedRuns > 0) {
+      console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'monitoring_retention_cleanup', deletedRuns }));
+    }
+  } catch (error: any) {
+    console.error(JSON.stringify({ level: 'error', service: 'worker', event: 'monitoring_retention_cleanup_failed', error: error.message }));
+  }
+}, config.MONITOR_RETENTION_INTERVAL_MS);
+retentionCleanupTimer.unref();
+
 const handleWorkerShutdown = async (signal: string) => {
   console.log(`Received ${signal}. Shutting down BullMQ workers gracefully...`);
   try {
     clearInterval(outboxReplayTimer);
+    clearInterval(retentionCleanupTimer);
+    monitoringScheduler.stop();
     await Promise.allSettled([
       auditWorker.close(),
       monitoringWorker.close(),

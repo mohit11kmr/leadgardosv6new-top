@@ -541,9 +541,12 @@ export class ReportService {
   }
 
   /**
-   * Public endpoint to access a sanitized report via share token
+   * Resolves + validates a public share token (format, revoked, expired,
+   * password), shared by accessPublicReport and any other public flow that
+   * needs to know which organization/report a share link belongs to (e.g.
+   * public testimonial submission).
    */
-  async accessPublicReport(token: string, password?: string) {
+  private async resolveShareLink(token: string, password?: string) {
     if (!token || !token.startsWith('lg_share_')) {
       const err = new Error('Invalid share token format');
       (err as unknown as { code: string }).code = 'INVALID_SHARE_TOKEN';
@@ -598,6 +601,15 @@ export class ReportService {
       await connection.del(attemptKey).catch(() => {});
     }
 
+    return link;
+  }
+
+  /**
+   * Public endpoint to access a sanitized report via share token
+   */
+  async accessPublicReport(token: string, password?: string) {
+    const link = await this.resolveShareLink(token, password);
+
     // Increment access count & update lastAccessedAt asynchronously
     await db.reportShareLink.update({
       where: { id: link.id },
@@ -612,6 +624,17 @@ export class ReportService {
       snapshot: link.report.snapshotData as unknown as ReportSnapshot,
       generatedAt: link.report.createdAt,
     };
+  }
+
+  /**
+   * Resolves which organization + report a share token belongs to, without
+   * bumping access-count analytics — used by public flows that act on the
+   * link's context (e.g. submitting a testimonial about that report) rather
+   * than viewing the report itself.
+   */
+  async getShareLinkContext(token: string, password?: string) {
+    const link = await this.resolveShareLink(token, password);
+    return { organizationId: link.report.organizationId, reportId: link.reportId };
   }
 
   /**

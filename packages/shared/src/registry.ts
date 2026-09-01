@@ -1,5 +1,6 @@
 import type { Finding, PageRecord, ScannerContext, ScannerExecutableDefinition, ScannerResult } from './types.js';
 import {
+  runCartScanner,
   runFormsScanner,
   runMixedContentScanner,
   runOpenGraphScanner,
@@ -144,6 +145,17 @@ export const PAGE_SCANNERS: ScannerExecutableDefinition[] = [
     version: 'v3',
     enabled: true,
     run: (page: PageRecord, ctx?: ScannerContext) => runTrackingScanner(page, ctx),
+  },
+  {
+    internalKey: 'CART',
+    featureId: 'LG-021',
+    name: 'Cart Leakage Monitor',
+    category: 'LEAD',
+    scope: 'PAGE',
+    severityPolicy: 'HIGH',
+    version: 'v1',
+    enabled: true,
+    run: (page: PageRecord, ctx?: ScannerContext) => runCartScanner(page, ctx),
   },
 ];
 

@@ -71,7 +71,8 @@ jobs:
           DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
           REDIS_URL: "redis://localhost:16380"
           JWT_SECRET: "test-jwt-secret-at-least-32-chars-long-for-security"
-          COOKIE_SECRET: "test-cookie-secret-at-least-32-chars-long-for-security"
+          REFRESH_TOKEN_SECRET: "test-refresh-secret-at-least-32-chars-long-for-security"
+          WEBHOOK_SECRET_ENCRYPTION_KEY: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
           ALLOW_LOCAL_FIXTURES: "true"
 
       - name: Build All Workspaces

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface AdminOrgItem {
   id: string;
@@ -19,6 +19,7 @@ export interface AdminOrgItem {
 export function AdminOrgsView() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-orgs', search],
@@ -37,6 +38,7 @@ export function AdminOrgsView() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-orgs'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to update organization status'),
   });
 
   return (
@@ -65,6 +67,7 @@ export function AdminOrgsView() {
 
       {isLoading && <div className="loadingState">Loading organizations...</div>}
       {error && <div className="errorBanner">{(error as Error).message}</div>}
+      {mutationError && <div className="errorBanner">{mutationError}</div>}
 
       {!isLoading && !error && (
         <div className="tableCard">

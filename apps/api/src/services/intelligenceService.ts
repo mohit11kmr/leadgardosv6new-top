@@ -3,6 +3,8 @@ import {
   analyzeWhatsAppOptimization,
   buildRevenueScenarios,
   explainScores,
+  generateAutoFixScript,
+  isManualFixRequired,
   simulateFunnelLeakage,
   type Finding,
   type ImpactInputs,
@@ -88,6 +90,42 @@ export class IntelligenceService {
     const firstPage = (audit.pages[0] as unknown as PageRecord) || undefined;
     const findings = (audit.findings ?? []) as unknown as Finding[];
     return analyzeWhatsAppOptimization(firstPage, findings);
+  }
+
+  /**
+   * Auto-Fix Script Studio: copy-paste-able remediation snippets for
+   * findings that are genuinely fixable via injectable client-side code
+   * (tracking tags, WhatsApp CTA). Findings that require a server-side
+   * change (security headers, TLS, broken routes) are reported separately
+   * as "requires manual fix" rather than given a fake script.
+   */
+  async getAutoFixScripts(auditId: string, organizationId: string) {
+    const audit = await db.audit.findFirst({
+      where: { id: auditId, organizationId },
+      include: { findings: true },
+    });
+    if (!audit) return null;
+
+    const findings = (audit.findings ?? []) as unknown as Finding[];
+    const scripts = findings
+      .map((finding) => {
+        const script = generateAutoFixScript(finding);
+        if (!script) return null;
+        return { findingId: finding.id, affectedUrl: finding.affectedUrl, ...script };
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+
+    const manualFixRequired = findings
+      .filter((finding) => isManualFixRequired(finding))
+      .map((finding) => ({
+        findingId: finding.id,
+        internalKey: finding.internalKey,
+        title: finding.title,
+        affectedUrl: finding.affectedUrl,
+        recommendation: finding.recommendation,
+      }));
+
+    return { scripts, manualFixRequired };
   }
 }
 

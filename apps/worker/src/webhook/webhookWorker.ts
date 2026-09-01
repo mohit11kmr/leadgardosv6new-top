@@ -4,6 +4,7 @@ import { config } from '@leadguard/config';
 import { db } from '@leadguard/database';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { validateExternalUrl } from '@leadguard/shared';
+import { decryptSecret } from '@leadguard/shared/dist/server-only/secret-encryption.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -50,8 +51,18 @@ export async function processWebhookDelivery(job: Job<WebhookJobData>) {
     timestamp,
   } = job.data;
 
+  // Idempotency guard: a replayed outbox event or a re-enqueued job reusing
+  // the same deliveryId must never cause a second real HTTP delivery to the
+  // customer's endpoint. If we've already recorded a SUCCESS for this
+  // deliveryId, short-circuit without sending.
+  const existing = await db.webhookDelivery.findUnique({ where: { deliveryId } });
+  if (existing?.status === 'SUCCESS') {
+    return { success: true, statusCode: existing.statusCode ?? undefined, deduped: true };
+  }
+
   const rawBody = JSON.stringify(payload);
-  const signature = generateWebhookSignature(rawBody, secretHash, timestamp);
+  const secret = decryptSecret(secretHash, config.WEBHOOK_SECRET_ENCRYPTION_KEY);
+  const signature = generateWebhookSignature(rawBody, secret, timestamp);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);

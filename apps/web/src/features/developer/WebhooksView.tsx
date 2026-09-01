@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface WebhookItem {
   id: string;
@@ -37,6 +37,7 @@ export function WebhooksView() {
   const [selectedEvents, setSelectedEvents] = useState<string[]>(['*']);
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
   const [pingStatus, setPingStatus] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: webhooks, isLoading, error } = useQuery({
     queryKey: ['webhooks'],
@@ -53,6 +54,7 @@ export function WebhooksView() {
       setGeneratedSecret(res.secret);
       queryClient.invalidateQueries({ queryKey: ['webhooks'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to create webhook'),
   });
 
   const deleteMutation = useMutation({
@@ -60,6 +62,7 @@ export function WebhooksView() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhooks'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to delete webhook'),
   });
 
   const pingMutation = useMutation({
@@ -69,6 +72,7 @@ export function WebhooksView() {
       setTimeout(() => setPingStatus(null), 3000);
       queryClient.invalidateQueries({ queryKey: ['webhooks'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to send test ping'),
   });
 
   const handleCreate = (e: React.FormEvent) => {
@@ -119,6 +123,7 @@ export function WebhooksView() {
       {pingStatus && <div className="alertBanner success mb-4">{pingStatus}</div>}
       {isLoading && <div className="loadingState">Loading webhooks...</div>}
       {error && <div className="errorBanner">{(error as Error).message}</div>}
+      {mutationError && <div className="errorBanner">{mutationError}</div>}
 
       {!isLoading && !error && (
         <div className="space-y-4">

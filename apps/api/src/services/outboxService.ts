@@ -2,7 +2,6 @@ import { db } from '@leadguard/database';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
-import { randomUUID } from 'node:crypto';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -86,7 +85,11 @@ export class OutboxService {
     );
 
     for (const endpoint of matchingEndpoints) {
-      const deliveryId = randomUUID();
+      // Deterministic (eventId + endpointId), not random — so a replay of a
+      // still-PENDING event (see the worker's outboxReplay) reuses the same
+      // BullMQ jobId / WebhookDelivery row instead of double-delivering to
+      // endpoints that already received it.
+      const deliveryId = `${eventId}:${endpoint.id}`;
       await webhookQueue.add(
         'deliver-webhook',
         {

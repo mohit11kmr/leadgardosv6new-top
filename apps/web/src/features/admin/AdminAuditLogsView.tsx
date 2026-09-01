@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface AdminAuditLogItem {
   id: string;

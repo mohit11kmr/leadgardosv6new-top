@@ -30,6 +30,8 @@ export default defineConfig({
       RAZORPAY_KEY_ID: 'rzp_test_placeholder_key_id',
       RAZORPAY_KEY_SECRET: 'placeholder_key_secret',
       RAZORPAY_WEBHOOK_SECRET: 'placeholder_webhook_secret',
+      WEBHOOK_SECRET_ENCRYPTION_KEY: 'c'.repeat(64),
+      ENABLE_JS_RENDERED_RESCAN: 'false',
     },
   },
 });

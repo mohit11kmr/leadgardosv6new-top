@@ -1,0 +1,1836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PPC Mastery Book - Page by Page Reader</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap');
+
+  :root {
+    --primary: #1a1a2e;
+    --secondary: #16213e;
+    --accent: #e94560;
+    --accent2: #0f3460;
+    --gold: #f5a623;
+    --green: #22c55e;
+    --light: #f8f9fa;
+    --dark: #0a0a0a;
+    --gradient1: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    --gradient2: linear-gradient(135deg, #e94560 0%, #f5a623 100%);
+    --shadow: 0 20px 60px rgba(0,0,0,0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Noto Sans Devanagari', sans-serif;
+    background: #f0f2f5;
+    color: #333;
+    line-height: 1.8;
+    overflow-x: hidden;
+  }
+
+  /* ========== PROGRESS BAR ========== */
+  .progress-bar-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: rgba(0,0,0,0.1);
+    z-index: 9999;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--gradient2);
+    transition: width 0.5s ease;
+    border-radius: 0 3px 3px 0;
+  }
+
+  /* ========== TOP NAV BAR ========== */
+  .top-nav {
+    position: fixed;
+    top: 6px;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 30px;
+    z-index: 9998;
+    box-shadow: 0 2px 20px rgba(0,0,0,0.05);
+  }
+
+  .nav-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .nav-logo {
+    font-family: 'Playfair Display', serif;
+    font-weight: 900;
+    font-size: 20px;
+    color: var(--primary);
+  }
+
+  .nav-logo span {
+    color: var(--accent);
+  }
+
+  .nav-page-info {
+    font-size: 13px;
+    color: #888;
+    background: #f0f2f5;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .read-count {
+    font-size: 13px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .read-count .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  /* ========== PAGE CONTAINER ========== */
+  .page-container {
+    margin-top: 76px;
+    min-height: calc(100vh - 76px);
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px 120px;
+  }
+
+  .page {
+    display: none;
+    max-width: 860px;
+    width: 100%;
+    animation: fadeInPage 0.5s ease;
+  }
+
+  .page.active {
+    display: block;
+  }
+
+  @keyframes fadeInPage {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ========== COVER PAGE ========== */
+  .cover {
+    min-height: calc(100vh - 180px);
+    background: var(--gradient1);
+    border-radius: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 80px 40px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at 30% 50%, rgba(233,69,96,0.15) 0%, transparent 50%),
+                radial-gradient(circle at 70% 50%, rgba(245,166,35,0.1) 0%, transparent 50%);
+    animation: float 20s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    50% { transform: translate(-20px, 20px) rotate(2deg); }
+  }
+
+  .cover-badge {
+    background: var(--gradient2);
+    color: white;
+    padding: 10px 30px;
+    border-radius: 50px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    position: relative;
+    z-index: 1;
+    margin-bottom: 40px;
+  }
+
+  .cover h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(44px, 7vw, 80px);
+    font-weight: 900;
+    color: white;
+    line-height: 1.1;
+    position: relative;
+    z-index: 1;
+    margin-bottom: 20px;
+  }
+
+  .cover h1 span {
+    background: var(--gradient2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .cover-subtitle {
+    font-size: clamp(15px, 2vw, 20px);
+    color: rgba(255,255,255,0.65);
+    position: relative;
+    z-index: 1;
+    max-width: 550px;
+    margin-bottom: 50px;
+    font-weight: 300;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 40px;
+    position: relative;
+    z-index: 1;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .cover-meta-item { text-align: center; color: white; }
+  .cover-meta-item .number {
+    font-size: 32px;
+    font-weight: 700;
+    background: var(--gradient2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .cover-meta-item .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.45);
+  }
+
+  /* ========== TABLE OF CONTENTS PAGE ========== */
+  .toc { padding: 10px 0; }
+
+  .toc-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .toc-header h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 36px;
+    color: var(--primary);
+    margin-bottom: 8px;
+  }
+
+  .toc-header p { color: #888; font-size: 15px; }
+
+  .toc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 12px;
+  }
+
+  .toc-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #eee;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .toc-item:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 16px rgba(233,69,96,0.08);
+    transform: translateY(-1px);
+  }
+
+  .toc-item.read { border-color: var(--green); background: #f0fdf4; }
+
+  .toc-number {
+    width: 40px; height: 40px; min-width: 40px;
+    background: var(--gradient1);
+    color: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  .toc-item.read .toc-number { background: var(--green); }
+
+  .toc-text h3 { font-size: 14px; font-weight: 600; color: var(--primary); line-height: 1.3; }
+  .toc-text span { font-size: 11px; color: var(--accent); font-weight: 500; }
+  .toc-item.read .toc-text span { color: var(--green); }
+
+  .toc-check {
+    margin-left: auto;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 2px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: transparent;
+    transition: all 0.3s;
+  }
+
+  .toc-item.read .toc-check {
+    background: var(--green);
+    border-color: var(--green);
+    color: white;
+  }
+
+  /* ========== CONTENT CARDS ========== */
+  .content-card {
+    background: white;
+    border-radius: 16px;
+    padding: 36px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    border: 1px solid rgba(0,0,0,0.04);
+  }
+
+  .content-card h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 22px;
+    color: var(--primary);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
+  }
+
+  .content-card h4 {
+    font-size: 16px;
+    color: var(--accent2);
+    margin: 22px 0 10px;
+    font-weight: 600;
+  }
+
+  .content-card p { color: #555; margin-bottom: 14px; font-size: 15px; }
+
+  .chapter-divider {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .chapter-badge {
+    display: inline-block;
+    background: var(--gradient1);
+    color: white;
+    padding: 6px 18px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .chapter-title {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 900;
+    color: var(--primary);
+    line-height: 1.2;
+  }
+
+  .chapter-title span { color: var(--accent); }
+
+  /* Hindi */
+  .hindi {
+    background: linear-gradient(135deg, #fff9f0 0%, #fff5f5 100%);
+    border-left: 4px solid var(--gold);
+    padding: 20px 24px;
+    border-radius: 0 12px 12px 0;
+    margin: 20px 0;
+    font-family: 'Noto Sans Devanagari', sans-serif;
+  }
+
+  .hindi-label {
+    display: inline-block;
+    background: var(--gold);
+    color: white;
+    padding: 3px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .hindi p, .hindi li { color: #665544; line-height: 1.9; }
+
+  /* Lists */
+  .feature-list { list-style: none; padding: 0; }
+
+  .feature-list li {
+    padding: 10px 14px 10px 38px;
+    margin-bottom: 6px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    position: relative;
+    font-size: 14px;
+    color: #444;
+  }
+
+  .feature-list li::before {
+    content: '→';
+    position: absolute;
+    left: 14px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .feature-list.numbered { counter-reset: list-counter; }
+  .feature-list.numbered li::before {
+    content: counter(list-counter);
+    counter-increment: list-counter;
+    background: var(--accent);
+    color: white;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    left: 8px; top: 12px;
+  }
+
+  /* Tables */
+  .table-wrapper { overflow-x: auto; margin: 18px 0; border-radius: 12px; border: 1px solid #eee; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead { background: var(--gradient1); color: white; }
+  th { padding: 12px 16px; text-align: left; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; color: #555; }
+  tbody tr:hover { background: #f8f9fa; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Tip/Warning Boxes */
+  .tip-box {
+    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+    border: 1px solid #86efac;
+    border-left: 5px solid #22c55e;
+    border-radius: 0 12px 12px 0;
+    padding: 20px;
+    margin: 20px 0;
+  }
+
+  .tip-box .tip-title {
+    color: #16a34a;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .warning-box {
+    background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
+    border: 1px solid #fdba74;
+    border-left: 5px solid #f97316;
+    border-radius: 0 12px 12px 0;
+    padding: 20px;
+    margin: 20px 0;
+  }
+
+  .warning-box .warning-title {
+    color: #ea580c;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .important-box {
+    background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%);
+    border: 1px solid #93c5fd;
+    border-left: 5px solid #3b82f6;
+    border-radius: 0 12px 12px 0;
+    padding: 20px;
+    margin: 20px 0;
+  }
+
+  .important-box .important-title {
+    color: #2563eb;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  /* Steps */
+  .steps-container { display: grid; gap: 12px; margin: 18px 0; }
+
+  .step-card {
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+    background: #f8f9fa;
+    border-radius: 10px;
+    border: 1px solid #eee;
+    align-items: flex-start;
+  }
+
+  .step-number {
+    min-width: 36px; height: 36px;
+    background: var(--gradient2);
+    color: white;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  .step-content h4 { font-size: 15px; color: var(--primary); margin-bottom: 2px; }
+  .step-content p { font-size: 13px; color: #666; margin: 0; }
+
+  /* Timeline */
+  .timeline { position: relative; padding-left: 36px; margin: 24px 0; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 13px; top: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(to bottom, var(--accent), var(--gold));
+    border-radius: 3px;
+  }
+
+  .timeline-item {
+    position: relative;
+    margin-bottom: 24px;
+    padding: 18px 22px;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #eee;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+  }
+
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -30px; top: 22px;
+    width: 12px; height: 12px;
+    background: var(--accent);
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  .timeline-item .week {
+    display: inline-block;
+    background: var(--gradient2);
+    color: white;
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .timeline-item h4 { font-size: 16px; color: var(--primary); margin-bottom: 4px; }
+  .timeline-item p { font-size: 13px; color: #666; margin: 0; }
+
+  /* Q&A */
+  .qa-card {
+    background: white;
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 12px;
+    border: 1px solid #eee;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.03);
+  }
+
+  .qa-card .question {
+    font-weight: 700;
+    color: var(--accent2);
+    font-size: 14px;
+    margin-bottom: 8px;
+    padding-left: 28px;
+    position: relative;
+  }
+
+  .qa-card .question::before {
+    content: 'Q';
+    position: absolute; left: 0; top: 0;
+    width: 20px; height: 20px;
+    background: var(--accent);
+    color: white;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .qa-card .answer {
+    color: #555;
+    font-size: 13px;
+    padding-left: 28px;
+    position: relative;
+  }
+
+  .qa-card .answer::before {
+    content: 'A';
+    position: absolute; left: 0; top: 0;
+    width: 20px; height: 20px;
+    background: #22c55e;
+    color: white;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  /* Project Cards */
+  .project-card {
+    background: white;
+    border-radius: 14px;
+    padding: 26px;
+    margin-bottom: 16px;
+    border: 2px solid #eee;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .project-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--gradient2);
+  }
+
+  .project-card .project-tag {
+    display: inline-block;
+    background: var(--gradient1);
+    color: white;
+    padding: 3px 12px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  .project-card h4 { font-size: 18px; color: var(--primary); margin-bottom: 8px; }
+
+  .project-card ul { list-style: none; padding: 0; }
+  .project-card li {
+    padding: 4px 0 4px 22px;
+    position: relative;
+    color: #666;
+    font-size: 13px;
+  }
+  .project-card li::before {
+    content: '✓';
+    position: absolute; left: 0;
+    color: #22c55e;
+    font-weight: 700;
+  }
+
+  /* Formula Cards */
+  .formula-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+    margin: 18px 0;
+  }
+
+  .formula-card {
+    background: white;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .formula-card .name { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .formula-card .formula { font-size: 17px; font-weight: 700; color: var(--accent2); font-family: 'Courier New', monospace; }
+  .formula-card .desc { font-size: 11px; color: #999; margin-top: 4px; }
+
+  /* ========== BOTTOM NAVIGATION ========== */
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 80px;
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(0,0,0,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 0 30px;
+    z-index: 9999;
+    box-shadow: 0 -4px 30px rgba(0,0,0,0.06);
+  }
+
+  .nav-btn {
+    padding: 12px 28px;
+    border-radius: 12px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .btn-back {
+    background: white;
+    color: #666;
+    border: 2px solid #e0e0e0;
+  }
+
+  .btn-back:hover { border-color: #bbb; background: #f8f8f8; }
+  .btn-back:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-mark-read {
+    background: var(--gradient2);
+    color: white;
+    padding: 12px 36px;
+    font-size: 15px;
+    box-shadow: 0 4px 20px rgba(233,69,96,0.3);
+  }
+
+  .btn-mark-read:hover { transform: translateY(-2px); box-shadow: 0 6px 25px rgba(233,69,96,0.4); }
+
+  .btn-mark-read.read-done {
+    background: var(--green);
+    box-shadow: 0 4px 20px rgba(34,197,94,0.3);
+    pointer-events: none;
+  }
+
+  .btn-next {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-next:hover { background: #252547; }
+  .btn-next:disabled { opacity: 0.3; cursor: not-allowed; background: #ccc; }
+
+  /* ========== FINISH PAGE ========== */
+  .finish-page {
+    min-height: calc(100vh - 180px);
+    background: var(--gradient1);
+    border-radius: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 80px 40px;
+    color: white;
+  }
+
+  .finish-page h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(32px, 5vw, 48px);
+    margin-bottom: 16px;
+  }
+
+  .finish-page h2 span {
+    background: var(--gradient2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .finish-page p { color: rgba(255,255,255,0.65); font-size: 16px; max-width: 500px; }
+
+  .stats-row {
+    display: flex;
+    gap: 40px;
+    margin-top: 40px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .stat-item { text-align: center; }
+  .stat-item .stat-num {
+    font-size: 40px;
+    font-weight: 700;
+    background: var(--gradient2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .stat-item .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.45);
+  }
+
+  .reset-btn {
+    margin-top: 40px;
+    padding: 12px 30px;
+    background: rgba(255,255,255,0.15);
+    border: 2px solid rgba(255,255,255,0.3);
+    color: white;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .reset-btn:hover { background: rgba(255,255,255,0.25); }
+
+  /* ========== RESPONSIVE ========== */
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 16px; }
+    .nav-logo { font-size: 16px; }
+    .toc-grid { grid-template-columns: 1fr; }
+    .formula-grid { grid-template-columns: 1fr; }
+    .content-card { padding: 22px; }
+    .bottom-nav { padding: 0 16px; gap: 10px; }
+    .nav-btn { padding: 10px 16px; font-size: 13px; }
+    .btn-mark-read { padding: 10px 24px; font-size: 14px; }
+    .cover { padding: 50px 24px; }
+    .page-container { padding: 20px 12px 120px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Progress Bar -->
+<div class="progress-bar-container">
+  <div class="progress-bar" id="progressBar"></div>
+</div>
+
+<!-- Top Nav -->
+<nav class="top-nav">
+  <div class="nav-left">
+    <div class="nav-logo">PPC <span>Mastery</span></div>
+    <div class="nav-page-info" id="pageInfo">Cover Page</div>
+  </div>
+  <div class="nav-right">
+    <div class="read-count">
+      <span class="dot"></span>
+      <span id="readCountText">0 / 19 read</span>
+    </div>
+  </div>
+</nav>
+
+<!-- Page Container -->
+<div class="page-container">
+
+<!-- ========== PAGE 0: COVER ========== -->
+<div class="page active" id="page-0" data-title="Cover Page">
+  <div class="cover">
+    <div class="cover-badge">Complete Preparation Guide 2026</div>
+    <h1>PPC <span>Mastery</span></h1>
+    <p class="cover-subtitle">Pay-Per-Click Advertising — from Zero to Professional. Complete Hindi + English guide for the Advero Ads Internship.</p>
+    <div class="cover-meta">
+      <div class="cover-meta-item"><div class="number">17</div><div class="label">Chapters</div></div>
+      <div class="cover-meta-item"><div class="number">50+</div><div class="label">Q&A</div></div>
+      <div class="cover-meta-item"><div class="number">12</div><div class="label">Weeks</div></div>
+      <div class="cover-meta-item"><div class="number">6</div><div class="label">Projects</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== PAGE 1: TABLE OF CONTENTS ========== -->
+<div class="page" id="page-1" data-title="Table of Contents">
+  <div class="toc">
+    <div class="toc-header">
+      <h2>Table of Contents</h2>
+      <p>Chapters unlock one by one as you read</p>
+    </div>
+    <div class="toc-grid" id="tocGrid">
+      <div class="toc-item" onclick="goToPage(2)"><div class="toc-number">01</div><div class="toc-text"><h3>What is PPC?</h3><span>Foundation • 2-3 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(3)"><div class="toc-number">02</div><div class="toc-text"><h3>Google Ads Complete Guide</h3><span>Core Skill • 7-10 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(4)"><div class="toc-number">03</div><div class="toc-text"><h3>Meta Ads (Facebook + Instagram)</h3><span>Core Skill • 5-7 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(5)"><div class="toc-number">04</div><div class="toc-text"><h3>Keyword Research</h3><span>Critical • 4-5 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(6)"><div class="toc-number">05</div><div class="toc-text"><h3>Competitor Analysis</h3><span>Strategy • 2-3 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(7)"><div class="toc-number">06</div><div class="toc-text"><h3>Audience Segmentation</h3><span>Targeting • 3-4 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(8)"><div class="toc-number">07</div><div class="toc-text"><h3>A/B Testing</h3><span>Optimization • 2-3 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(9)"><div class="toc-number">08</div><div class="toc-text"><h3>Campaign Optimization</h3><span>Ongoing Practice</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(10)"><div class="toc-number">09</div><div class="toc-text"><h3>Performance Reporting</h3><span>Reporting • 2-3 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(11)"><div class="toc-number">10</div><div class="toc-text"><h3>Excel & Google Sheets</h3><span>Tools • 3-4 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(12)"><div class="toc-number">11</div><div class="toc-text"><h3>Landing Page Basics</h3><span>Conversion • 1-2 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(13)"><div class="toc-number">12</div><div class="toc-text"><h3>Budget Management</h3><span>Finance • 1-2 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(14)"><div class="toc-number">13</div><div class="toc-text"><h3>Google Ads Certification</h3><span>Certification • 3-5 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(15)"><div class="toc-number">14</div><div class="toc-text"><h3>Tools You Must Know</h3><span>Essential • 2-3 Days</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(16)"><div class="toc-number">15</div><div class="toc-text"><h3>Career Roadmap</h3><span>Planning</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(17)"><div class="toc-number">16</div><div class="toc-text"><h3>50 Interview Questions</h3><span>Interview Prep</span></div><div class="toc-check">✓</div></div>
+      <div class="toc-item" onclick="goToPage(18)"><div class="toc-number">17</div><div class="toc-text"><h3>Portfolio Projects</h3><span>Hands-On</span></div><div class="toc-check">✓</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== PAGE 2: CHAPTER 1 - What is PPC ========== -->
+<div class="page" id="page-2" data-title="Ch 01: What is PPC?">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 01</span><h2 class="chapter-title">What is PPC? <span>PPC Kya Hai?</span></h2></div>
+
+  <div class="content-card">
+    <h3>Understanding PPC</h3>
+    <p>PPC stands for <strong>Pay-Per-Click</strong>. It is a digital advertising model where advertisers pay a fee each time one of their ads is clicked. You are <strong>buying visits</strong> to your site, rather than earning them organically.</p>
+    <p>When someone searches on Google, the top results are often paid ads. When you scroll Facebook or Instagram, many posts are paid advertisements.</p>
+    <h4>Key Concepts</h4>
+    <ul class="feature-list">
+      <li><strong>CPC (Cost Per Click)</strong> — How much you pay per click</li>
+      <li><strong>CTR (Click-Through Rate)</strong> — % of people who see and click your ad</li>
+      <li><strong>Quality Score</strong> — Google's 1-10 relevance rating</li>
+      <li><strong>Conversion Rate</strong> — % of clicks that become sales</li>
+      <li><strong>ROAS</strong> — Revenue earned per rupee spent</li>
+      <li><strong>Impressions</strong> — Times your ad was shown</li>
+      <li><strong>Reach</strong> — Unique people who saw your ad</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Types of PPC</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Where</th><th>Best For</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Search Ads</strong></td><td>Google search results</td><td>Services, B2B</td></tr>
+          <tr><td><strong>Display Ads</strong></td><td>Websites (banners)</td><td>Awareness, retargeting</td></tr>
+          <tr><td><strong>Shopping Ads</strong></td><td>Product ads with images</td><td>E-commerce</td></tr>
+          <tr><td><strong>Video Ads</strong></td><td>YouTube</td><td>Storytelling</td></tr>
+          <tr><td><strong>Social Ads</strong></td><td>Facebook, Instagram</td><td>Targeted campaigns</td></tr>
+          <tr><td><strong>App Ads</strong></td><td>Play Store, Search</td><td>App installs</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>PPC = Pay-Per-Click.</strong> Har click ke liye paisa lagta hai. Aap website pe visitors khareed rahe ho.</p>
+    <p>Google search ke top results = ads. Facebook/Instagram pe jo posts dikhte hain = paid ads.</p>
+    <p><strong>Seekhna hoga:</strong> CPC, CTR, Quality Score, Conversion Rate, ROAS, Impressions, Reach.</p>
+    <p><strong>Types:</strong> Search, Display, Shopping, Video, Social, App — har ek ka alag use hai.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>2-3 Days — Concepts samajh lo.</p></div>
+</div>
+
+<!-- ========== PAGE 3: CHAPTER 2 - Google Ads ========== -->
+<div class="page" id="page-3" data-title="Ch 02: Google Ads">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 02</span><h2 class="chapter-title">Google Ads <span>Complete Guide</span></h2></div>
+
+  <div class="content-card">
+    <h3>Account Structure</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Account</h4><p>Business email, billing, settings</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Campaign</h4><p>Budget, targeting, ad type</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Ad Group</h4><p>Keywords + ads grouped by theme</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Keywords</h4><p>Words that trigger your ads</p></div></div>
+      <div class="step-card"><div class="step-number">5</div><div class="step-content"><h4>Ads</h4><p>Ad copy people see</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Campaign Types</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Format</th><th>Best For</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Search</strong></td><td>Text ads on search</td><td>Services, B2B</td></tr>
+          <tr><td><strong>Display</strong></td><td>Banner ads</td><td>Awareness</td></tr>
+          <tr><td><strong>Shopping</strong></td><td>Product ads</td><td>E-commerce</td></tr>
+          <tr><td><strong>Video</strong></td><td>YouTube ads</td><td>Brand awareness</td></tr>
+          <tr><td><strong>Performance Max</strong></td><td>AI-driven, all Google</td><td>Max conversions</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Quality Score — Game Changer</h3>
+    <p>Google's 1-10 rating. <strong>Higher score = Lower CPC.</strong> If your score is 10 and competitor's is 5, you pay HALF for same position. Aim for 7+.</p>
+    <h4>Three Factors:</h4>
+    <ul class="feature-list">
+      <li><strong>Expected CTR</strong> — How likely people click</li>
+      <li><strong>Ad Relevance</strong> — How relevant ad is to keywords</li>
+      <li><strong>Landing Page Experience</strong> — How good your page is</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Keyword Match Types</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Example</th><th>Reach</th><th>Targeting</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Broad</strong></td><td>running shoes</td><td>Widest</td><td>Least targeted</td></tr>
+          <tr><td><strong>Phrase</strong></td><td>"running shoes"</td><td>Moderate</td><td>Balanced</td></tr>
+          <tr><td><strong>Exact</strong></td><td>[running shoes]</td><td>Narrowest</td><td>Most targeted</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="warning-box">
+      <div class="warning-title">⚠️ Negative Keywords</div>
+      <p>Words you DON'T want to show for. Add 50-100 negatives to prevent budget waste.</p>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Ad Copy Formula</h3>
+    <div style="background:#f8f9fa;padding:20px;border-radius:10px;border-left:4px solid var(--accent);">
+      <p><strong>H1:</strong> Best PPC Agency in Delhi</p>
+      <p><strong>H2:</strong> 3X More Leads Guaranteed</p>
+      <p><strong>H3:</strong> Free Consultation Today</p>
+      <p><strong>D1:</strong> Data-driven PPC management that delivers real ROI. Google Ads certified team.</p>
+      <p><strong>D2:</strong> Trusted by 200+ brands. Start now. 20% off first month.</p>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>Google Ads = sabse bada PPC platform. 80% jobs mein aana zaroori hai.</strong></p>
+    <p>Account &gt; Campaign &gt; Ad Group &gt; Keywords &gt; Ads — hierarchy yaad rakho.</p>
+    <p><strong>Quality Score:</strong> Higher = Sasta CPC. 7+ score rakho. <strong>Match Types:</strong> Broad, Phrase, Exact. Negative keywords bahut important hain.</p>
+    <p><strong>Ad Copy:</strong> 3 Headlines (30 chars) + 2 Descriptions (90 chars). Keywords + Benefit + CTA.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>7-10 Days — Google Ads Editor download karo, practice karo.</p></div>
+</div>
+
+<!-- ========== PAGE 4: CHAPTER 3 - Meta Ads ========== -->
+<div class="page" id="page-4" data-title="Ch 03: Meta Ads">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 03</span><h2 class="chapter-title">Meta Ads <span>Facebook + Instagram</span></h2></div>
+
+  <div class="content-card">
+    <h3>Account Structure</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Account</h4><p>Business Manager + payment</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Campaign</h4><p>Objective selection</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Ad Set</h4><p>Audience, budget, placement</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Ad</h4><p>Creative + copy</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Campaign Objectives</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Stage</th><th>Objective</th><th>Goal</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Awareness</strong></td><td>Brand Awareness / Reach</td><td>Maximum visibility</td></tr>
+          <tr><td><strong>Consideration</strong></td><td>Traffic / Engagement / Leads</td><td>Website visits, form fills</td></tr>
+          <tr><td><strong>Conversion</strong></td><td>Purchases / Signups</td><td>Direct sales</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Meta's Superpower — Audience Targeting</h3>
+    <ul class="feature-list numbered">
+      <li><strong>Core Audiences</strong> — Location, age, interests, behaviors</li>
+      <li><strong>Custom Audiences</strong> — Website visitors, app users, customer lists</li>
+      <li><strong>Lookalike Audiences</strong> — New audience similar to best customers (start with 1%)</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Ad Creative Types</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Best For</th><th>Tip</th></tr></thead>
+        <tbody>
+          <tr><td>Single Image</td><td>Direct messaging</td><td>1080x1080</td></tr>
+          <tr><td>Video</td><td>Storytelling</td><td>Hook in 3 sec</td></tr>
+          <tr><td>Carousel</td><td>Multiple products</td><td>Up to 10 cards</td></tr>
+          <tr><td>Stories/Reels</td><td>Full-screen</td><td>9:16 ratio</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>Meta Ads = Facebook + Instagram ads.</strong> Audience targeting bahut powerful hai.</p>
+    <p>Core (interests), Custom (website visitors), Lookalike (best customers jaisi nayi audience). 1% se start karo.</p>
+    <p>Image, Video, Carousel, Stories, Reels — High quality use karo, hook pehle 3 sec mein.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>5-7 Days — Facebook Blueprint courses complete karo.</p></div>
+</div>
+
+<!-- ========== PAGE 5: CHAPTER 4 - Keyword Research ========== -->
+<div class="page" id="page-5" data-title="Ch 04: Keyword Research">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 04</span><h2 class="chapter-title">Keyword Research <span>PPC Foundation</span></h2></div>
+
+  <div class="content-card">
+    <h3>Types of Keywords</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Example</th><th>Volume</th><th>Intent</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Head</strong></td><td>"shoes"</td><td>Very High</td><td>Low</td></tr>
+          <tr><td><strong>Long-Tail</strong></td><td>"best running shoes under 5000"</td><td>Low</td><td>High ✅</td></tr>
+          <tr><td><strong>Brand</strong></td><td>"Nike shoes"</td><td>Medium</td><td>High</td></tr>
+          <tr><td><strong>Product</strong></td><td>"buy running shoes online"</td><td>Medium</td><td>Very High ✅</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="important-box"><div class="important-title">🎯 Best for PPC</div><p><strong>Long-tail keywords</strong> — lower volume, less competition, HIGH intent, cheaper clicks, better conversions.</p></div>
+  </div>
+
+  <div class="content-card">
+    <h3>Tools</h3>
+    <h4>Free</h4>
+    <ul class="feature-list">
+      <li><strong>Google Keyword Planner</strong> — Most important</li>
+      <li><strong>Google Autocomplete</strong> — Real suggestions</li>
+      <li><strong>AnswerThePublic</strong> — Questions people ask</li>
+    </ul>
+    <h4>Paid</h4>
+    <ul class="feature-list">
+      <li><strong>SEMrush</strong> — Best all-in-one</li>
+      <li><strong>Ahrefs</strong> — Best for keywords</li>
+      <li><strong>SpyFu</strong> — Best for competitor keywords</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Research Process</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Brainstorm Seed Keywords</h4><p>What does the business sell?</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Expand with Tools</h4><p>Enter in Keyword Planner, get hundreds</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Filter & Analyze</h4><p>Remove irrelevant, group similar, prioritize by intent</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Add Negatives</h4><p>Block irrelevant terms</p></div></div>
+      <div class="step-card"><div class="step-number">5</div><div class="step-content"><h4>Organize Ad Groups</h4><p>5-20 related keywords per group</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>Keyword research PPC ki FOUNDATION hai.</strong> Bina keywords ke paise barbaad.</p>
+    <p>Long-tail best hai — kam competition, zyada conversion. Tools: Keyword Planner (FREE), SEMrush (Paid). Process: Seed → Expand → Filter → Negatives → Ad Groups.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>4-5 Days</p></div>
+</div>
+
+<!-- ========== PAGE 6: CHAPTER 5 - Competitor Analysis ========== -->
+<div class="page" id="page-6" data-title="Ch 05: Competitor Analysis">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 05</span><h2 class="chapter-title">Competitor Analysis <span>Know Your Competition</span></h2></div>
+
+  <div class="content-card">
+    <h3>What to Analyze</h3>
+    <ul class="feature-list numbered">
+      <li><strong>Their Keywords</strong> — What they bid on, what they DON'T target</li>
+      <li><strong>Their Ad Copy</strong> — Headlines, offers, CTAs</li>
+      <li><strong>Landing Pages</strong> — Design, CTA, speed, trust signals</li>
+      <li><strong>Budget Estimate</strong> — Approximate monthly spend</li>
+      <li><strong>Ad Extensions</strong> — Sitelinks, callouts, phone</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Tools</h3>
+    <ul class="feature-list">
+      <li><strong>Google Auction Insights</strong> — Free, inside Google Ads</li>
+      <li><strong>Facebook Ad Library</strong> — See ALL active ads (FREE)</li>
+      <li><strong>SEMrush / SpyFu</strong> — Competitor data</li>
+      <li><strong>Google Search</strong> — Manually check competitor ads</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Framework</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>List Top 5 Competitors</h4></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Analyze Each</h4><p>Keywords, copy, offers, landing pages, budget</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Find Gaps</h4><p>What they DON'T do = your opportunity</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Create Better Strategy</h4><p>Target their gaps, differentiate</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Competitors ke keywords, ad copy, landing pages, budget analyze karo. Facebook Ad Library (FREE) se saare active ads dekh sakte ho. Gaps dhundho aur better strategy banao.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>2-3 Days</p></div>
+</div>
+
+<!-- ========== PAGE 7: CHAPTER 6 - Audience Segmentation ========== -->
+<div class="page" id="page-7" data-title="Ch 06: Audience Segmentation">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 06</span><h2 class="chapter-title">Audience Segmentation <span>Right Person, Right Ad</span></h2></div>
+
+  <div class="content-card">
+    <h3>Audience Types</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Type</th><th>Based On</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Demographic</strong></td><td>Age, Gender, Income, Education</td></tr>
+          <tr><td><strong>Interest-Based</strong></td><td>Pages liked, content engaged</td></tr>
+          <tr><td><strong>Behavioral</strong></td><td>Purchase behavior, device usage</td></tr>
+          <tr><td><strong>Custom</strong></td><td>Website visitors, customer lists</td></tr>
+          <tr><td><strong>Lookalike</strong></td><td>Similar to existing customers</td></tr>
+          <tr><td><strong>Remarketing</strong></td><td>Visited but didn't convert</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Segmentation Strategies</h3>
+    <ul class="feature-list numbered">
+      <li><strong>Funnel-Based</strong> — TOFU → MOFU → BOFU</li>
+      <li><strong>Product-Based</strong> — Separate per product</li>
+      <li><strong>Location-Based</strong> — Separate per city/region</li>
+      <li><strong>Device-Based</strong> — Mobile vs Desktop</li>
+      <li><strong>Time-Based</strong> — Dayparting, seasonal</li>
+    </ul>
+    <div class="important-box"><div class="important-title">📌 Golden Rule</div><p>1 Audience Segment = 1 Ad Group. Never mix.</p></div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Sahi ad sahi insaan ko sahi time pe dikhana = segmentation. Funnel, Product, Location, Device, Time — strategies use karo. 1 Segment = 1 Ad Group.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>3-4 Days</p></div>
+</div>
+
+<!-- ========== PAGE 8: CHAPTER 7 - A/B Testing ========== -->
+<div class="page" id="page-8" data-title="Ch 07: A/B Testing">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 07</span><h2 class="chapter-title">A/B Testing <span>Test, Learn, Improve</span></h2></div>
+
+  <div class="content-card">
+    <h3>What to Test</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Element</th><th>What to Test</th><th>Impact</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Headlines</strong></td><td>Wording, offers, numbers</td><td>Highest 🔥</td></tr>
+          <tr><td><strong>Images</strong></td><td>Colors, people vs product</td><td>High</td></tr>
+          <tr><td><strong>CTAs</strong></td><td>Button text, color, placement</td><td>High</td></tr>
+          <tr><td><strong>Landing Page</strong></td><td>Layout, form length, trust</td><td>High</td></tr>
+          <tr><td><strong>Audience</strong></td><td>Different segments</td><td>Medium</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>How to Run Tests</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Hypothesis</h4><p>"X change will improve Y by Z%"</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Two Versions</h4><p>A (Original) vs B (Changed)</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Run Together</h4><p>Same time, budget (50/50), audience</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Wait</h4><p>Min 1000 impressions or 2 weeks</p></div></div>
+      <div class="step-card"><div class="step-number">5</div><div class="step-content"><h4>Winner</h4><p>Keep best, test next element</p></div></div>
+    </div>
+    <div class="warning-box"><div class="warning-title">⚠️ Rule</div><p>Test ONE thing at a time. Don't rush results.</p></div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Do versions chalao, dekho kaun better. Headlines, Images, CTAs, Landing Pages sab test karo. RULE: EK TIME PE EK HI CHEEZ. 1000 impressions ya 2 weeks wait karo.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>2-3 Days</p></div>
+</div>
+
+<!-- ========== PAGE 9: CHAPTER 8 - Campaign Optimization ========== -->
+<div class="page" id="page-9" data-title="Ch 08: Campaign Optimization">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 08</span><h2 class="chapter-title">Campaign Optimization <span>Better Results</span></h2></div>
+
+  <div class="content-card">
+    <h3>Daily Tasks</h3>
+    <ul class="feature-list">
+      <li>Check spend vs budget</li>
+      <li>Review search terms, add negatives</li>
+      <li>Check disapproved ads</li>
+      <li>Monitor conversion tracking</li>
+      <li>Watch for anomalies</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Weekly Tasks</h3>
+    <ul class="feature-list">
+      <li><strong>Keywords:</strong> Pause poor, boost winners</li>
+      <li><strong>Ad Copy:</strong> Pause low CTR, test new</li>
+      <li><strong>Audiences:</strong> Budget to top performers</li>
+      <li><strong>Geography:</strong> Adjust by location</li>
+      <li><strong>Devices:</strong> Mobile vs Desktop</li>
+    </ul>
+  </div>
+
+  <div class="content-card">
+    <h3>Key Tactics</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Search Term Mining</h4><p>Add winners as keywords, losers as negatives</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Ad Copy Refresh</h4><p>Update every 2-3 months</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Bid Adjustments</h4><p>Increase for winners, decrease for losers</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Budget Pacing</h4><p>Spread evenly, increase during peaks</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>Daily:</strong> Spend check, search terms, negatives. <strong>Weekly:</strong> Keywords, ad copy, audience review. <strong>Tactics:</strong> Term mining, copy refresh, bid adjustments, budget pacing.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>Ongoing — Practice se seekho.</p></div>
+</div>
+
+<!-- ========== PAGE 10: CHAPTER 9 - Performance Reporting ========== -->
+<div class="page" id="page-10" data-title="Ch 09: Performance Reporting">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 09</span><h2 class="chapter-title">Performance Reporting <span>Show Results</span></h2></div>
+
+  <div class="content-card">
+    <h3>Key Metrics</h3>
+    <div class="formula-grid">
+      <div class="formula-card"><div class="name">CTR</div><div class="formula">Clicks/Imp×100</div><div class="desc">Click-through rate</div></div>
+      <div class="formula-card"><div class="name">CPC</div><div class="formula">Cost/Clicks</div><div class="desc">Cost per click</div></div>
+      <div class="formula-card"><div class="name">Conv Rate</div><div class="formula">Conv/Clicks×100</div><div class="desc">Conversion rate</div></div>
+      <div class="formula-card"><div class="name">CPA</div><div class="formula">Cost/Conversions</div><div class="desc">Cost per acquisition</div></div>
+      <div class="formula-card"><div class="name">ROAS</div><div class="formula">Revenue/Cost</div><div class="desc">Return on ad spend</div></div>
+      <div class="formula-card"><div class="name">Quality Score</div><div class="formula">1 — 10</div><div class="desc">Relevance rating</div></div>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Weekly Report Format</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Executive Summary</h4><p>2-3 lines: performance vs last week</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Campaign Table</h4><p>Clicks | CTR | CPC | Conv | CPA | ROAS</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Top/Bottom Keywords</h4><p>Best 10 + Worst 10</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Issues & Recommendations</h4><p>What happened + next steps</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>CTR, CPC, CPA, ROAS — sab formulas yaad karo. Weekly report: Summary → Campaign table → Keywords → Recommendations. Tools: Google Sheets, Looker Studio (FREE).</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>2-3 Days</p></div>
+</div>
+
+<!-- ========== PAGE 11: CHAPTER 10 - Excel ========== -->
+<div class="page" id="page-11" data-title="Ch 10: Excel & Sheets">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 10</span><h2 class="chapter-title">Excel & Google Sheets <span>PPC Essential</span></h2></div>
+
+  <div class="content-card">
+    <h3>Essential Formulas</h3>
+    <div class="formula-grid">
+      <div class="formula-card"><div class="name">Sum</div><div class="formula">=SUM(A1:A10)</div></div>
+      <div class="formula-card"><div class="name">Average</div><div class="formula">=AVERAGE(A1:A10)</div></div>
+      <div class="formula-card"><div class="name">IF</div><div class="formula">=IF(A1>10,"Good","Bad")</div></div>
+      <div class="formula-card"><div class="name">VLOOKUP</div><div class="formula">=VLOOKUP(A1,Sheet2!A:B,2,0)</div></div>
+      <div class="formula-card"><div class="name">SUMIF</div><div class="formula">=SUMIF(A:A,"X",B:B)</div></div>
+      <div class="formula-card"><div class="name">COUNTIF</div><div class="formula">=COUNTIF(A:A,"X")</div></div>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Pivot Tables</h3>
+    <p><strong>Essential for reporting.</strong> Summarize large datasets quickly.</p>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>Select Data</h4></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Insert → Pivot Table</h4></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Drag Fields</h4><p>Rows, Columns, Values, Filters</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Analyze</h4><p>Filter, sort, extract insights</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>SUM, IF, VLOOKUP, SUMIF, COUNTIF — formulas seekho. Pivot Tables reporting ke liye best tool hai. Practice karo real data pe.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>3-4 Days</p></div>
+</div>
+
+<!-- ========== PAGE 12: CHAPTER 11 - Landing Pages ========== -->
+<div class="page" id="page-12" data-title="Ch 11: Landing Pages">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 11</span><h2 class="chapter-title">Landing Page Basics <span>Conversions Happen Here</span></h2></div>
+
+  <div class="content-card">
+    <h3>Essentials</h3>
+    <ul class="feature-list numbered">
+      <li><strong>Headline matches ad copy</strong></li>
+      <li><strong>Clear value proposition</strong></li>
+      <li><strong>Strong CTA above the fold</strong></li>
+      <li><strong>Trust signals</strong> — Reviews, logos, guarantees</li>
+      <li><strong>Mobile responsive</strong></li>
+      <li><strong>Fast loading</strong> — Under 3 seconds</li>
+      <li><strong>Minimal navigation</strong> — No distractions</li>
+      <li><strong>Relevant content</strong> — Match ad promise</li>
+      <li><strong>Easy conversion mechanism</strong></li>
+      <li><strong>Privacy policy</strong></li>
+    </ul>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Ad se matching headline, Clear value proposition, Strong CTA, Trust signals, Mobile responsive, Fast loading (&lt;3 sec), Minimal navigation — yeh sab zaroori hai. Quality Score pe impact padta hai.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>1-2 Days</p></div>
+</div>
+
+<!-- ========== PAGE 13: CHAPTER 12 - Budget ========== -->
+<div class="page" id="page-13" data-title="Ch 12: Budget Management">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 12</span><h2 class="chapter-title">Budget Management <span>Smart Spending</span></h2></div>
+
+  <div class="content-card">
+    <h3>Principles</h3>
+    <ul class="feature-list numbered">
+      <li><strong>Start small, scale winners</strong> — ₹200-500/day start</li>
+      <li><strong>80/20 Rule</strong> — 80% proven, 20% testing</li>
+      <li><strong>Budget Pacing</strong> — Don't blow budget in week 1</li>
+      <li><strong>10% Reserve</strong> — For opportunities</li>
+    </ul>
+    <div class="warning-box"><div class="warning-title">⚠️ Mistakes</div><p>Spending too fast, equal budget for all, ignoring seasonality, overspending on brand keywords.</p></div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Chhota start, winners pe scale. 80/20 rule. Evenly spend. 10% reserve. Daily monitoring zaroori hai.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>1-2 Days</p></div>
+</div>
+
+<!-- ========== PAGE 14: CHAPTER 13 - Certification ========== -->
+<div class="page" id="page-14" data-title="Ch 13: Google Certification">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 13</span><h2 class="chapter-title">Google Ads Certification <span>Free & Valuable</span></h2></div>
+
+  <div class="content-card">
+    <h3>Certifications</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Certification</th><th>Priority</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Search</strong></td><td>⭐ GET FIRST</td><td>FREE</td></tr>
+          <tr><td><strong>Display</strong></td><td>⭐⭐ Important</td><td>FREE</td></tr>
+          <tr><td><strong>Shopping</strong></td><td>Good to have</td><td>FREE</td></tr>
+          <tr><td><strong>Video</strong></td><td>Good to have</td><td>FREE</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>How to Get Certified</h3>
+    <div class="steps-container">
+      <div class="step-card"><div class="step-number">1</div><div class="step-content"><h4>skillshop.withgoogle.com</h4><p>Create free account</p></div></div>
+      <div class="step-card"><div class="step-number">2</div><div class="step-content"><h4>Complete Courses</h4><p>60-90 mins each</p></div></div>
+      <div class="step-card"><div class="step-number">3</div><div class="step-content"><h4>Take Exam</h4><p>75 min, 50 Qs, 80% to pass</p></div></div>
+      <div class="step-card"><div class="step-number">4</div><div class="step-content"><h4>Get Certified</h4><p>FREE, valid 1 year, unlimited retakes</p></div></div>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>skillshop.withgoogle.com pe jao, courses complete karo, exam do. FREE hai, 1 year valid. Pehle Search Certification lo — sabse important.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>3-5 Days</p></div>
+</div>
+
+<!-- ========== PAGE 15: CHAPTER 14 - Tools ========== -->
+<div class="page" id="page-15" data-title="Ch 14: Tools">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 14</span><h2 class="chapter-title">Tools You Must Know <span>PPC Toolkit</span></h2></div>
+
+  <div class="content-card">
+    <h3>Free Tools</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Tool</th><th>Purpose</th><th>Priority</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Google Ads Editor</strong></td><td>Offline campaign management</td><td>⭐⭐⭐</td></tr>
+          <tr><td><strong>Keyword Planner</strong></td><td>Keyword research</td><td>⭐⭐⭐</td></tr>
+          <tr><td><strong>Analytics 4</strong></td><td>Traffic + conversions</td><td>⭐⭐⭐</td></tr>
+          <tr><td><strong>Tag Manager</strong></td><td>Tracking codes</td><td>⭐⭐</td></tr>
+          <tr><td><strong>Facebook Business Suite</strong></td><td>Meta ads</td><td>⭐⭐⭐</td></tr>
+          <tr><td><strong>Canva</strong></td><td>Ad images</td><td>⭐⭐</td></tr>
+          <tr><td><strong>Google Sheets</strong></td><td>Reporting</td><td>⭐⭐⭐</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Paid (Know the Names)</h3>
+    <ul class="feature-list">
+      <li><strong>SEMrush</strong> — All-in-one marketing</li>
+      <li><strong>SpyFu</strong> — Competitor analysis</li>
+      <li><strong>Unbounce</strong> — Landing page builder</li>
+      <li><strong>Hotjar</strong> — Heatmaps</li>
+      <li><strong>Supermetrics</strong> — Data aggregation</li>
+    </ul>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>FREE: Ads Editor, Keyword Planner, Analytics 4, Tag Manager, FB Business Suite, Canva, Sheets. Paid: SEMrush, SpyFu, Unbounce, Hotjar, Supermetrics — naam pata hona chahiye.</p>
+  </div>
+
+  <div class="tip-box"><div class="tip-title">⏱ Learning Time</div><p>2-3 Days</p></div>
+</div>
+
+<!-- ========== PAGE 16: CHAPTER 15 - Career Roadmap ========== -->
+<div class="page" id="page-16" data-title="Ch 15: Career Roadmap">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 15</span><h2 class="chapter-title">Career Roadmap <span>12-Week Plan</span></h2></div>
+
+  <div class="content-card">
+    <h3>12-Week Plan</h3>
+    <div class="timeline">
+      <div class="timeline-item"><span class="week">Week 1-2</span><h4>Foundation</h4><p>PPC basics, Google Ads setup, keyword basics. Cost: ₹0-500</p></div>
+      <div class="timeline-item"><span class="week">Week 3-5</span><h4>Core Skills</h4><p>Google Ads (Search, Display, Shopping), keyword research, ad copy, Analytics, start certification</p></div>
+      <div class="timeline-item"><span class="week">Week 6-8</span><h4>Advanced</h4><p>Meta Ads, audience targeting, A/B testing, bidding, reporting, optimization</p></div>
+      <div class="timeline-item"><span class="week">Week 9-10</span><h4>Certification & Portfolio</h4><p>Google Ads cert, 2-3 practice campaigns, sample reports, portfolio</p></div>
+      <div class="timeline-item"><span class="week">Week 11-12</span><h4>Interview Prep</h4><p>Questions, case studies, resume, LinkedIn</p></div>
+    </div>
+  </div>
+
+  <div class="content-card">
+    <h3>Salary Expectations (India 2026)</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Level</th><th>Experience</th><th>Salary</th></tr></thead>
+        <tbody>
+          <tr><td>Internship</td><td>Current</td><td>₹5K-15K/month</td></tr>
+          <tr><td>Fresher</td><td>0-1 year</td><td>₹2.5-4 LPA</td></tr>
+          <tr><td>Junior</td><td>1-3 years</td><td>₹4-8 LPA</td></tr>
+          <tr><td>Mid</td><td>3-5 years</td><td>₹8-15 LPA</td></tr>
+          <tr><td>Senior</td><td>5+ years</td><td>₹15-30+ LPA</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>12 Weeks mein ready. Cost: ₹0-500. Salary: Internship ₹5K-15K/month, Fresher ₹2.5-4 LPA, 3+ years ₹8-15 LPA, Senior ₹15-30+ LPA.</p>
+  </div>
+</div>
+
+<!-- ========== PAGE 17: CHAPTER 16 - Interview Questions ========== -->
+<div class="page" id="page-17" data-title="Ch 16: Interview Q&A">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 16</span><h2 class="chapter-title">50 Interview Questions <span>Crack It</span></h2></div>
+
+  <div class="content-card">
+    <h3>PPC Basics</h3>
+    <div class="qa-card"><div class="question">What is PPC?</div><div class="answer">Pay-Per-Click — you pay each time someone clicks your ad. Buying traffic instead of earning organically.</div></div>
+    <div class="qa-card"><div class="question">PPC vs SEO vs SEM?</div><div class="answer">PPC = Paid ads. SEO = Organic search. SEM = PPC + SEO combined.</div></div>
+    <div class="qa-card"><div class="question">What is CTR?</div><div class="answer">Click-Through Rate = (Clicks/Impressions) × 100. Affects Quality Score and ad rank.</div></div>
+    <div class="qa-card"><div class="question">What is Quality Score?</div><div class="answer">Google's 1-10 rating based on CTR, ad relevance, landing page. Higher = lower CPC.</div></div>
+  </div>
+
+  <div class="content-card">
+    <h3>Google Ads</h3>
+    <div class="qa-card"><div class="question">What is Ad Rank?</div><div class="answer">Max CPC Bid × Quality Score. Determines ad position.</div></div>
+    <div class="qa-card"><div class="question">What are negative keywords?</div><div class="answer">Excluded keywords that prevent ads from showing for irrelevant searches. Saves budget.</div></div>
+    <div class="qa-card"><div class="question">What is remarketing?</div><div class="answer">Showing ads to people who visited but didn't convert. Very effective.</div></div>
+    <div class="qa-card"><div class="question">What are ad extensions?</div><div class="answer">Extra info with ads: sitelinks, phone, location. Free to add, improve CTR.</div></div>
+  </div>
+
+  <div class="content-card">
+    <h3>Optimization Scenarios</h3>
+    <div class="qa-card"><div class="question">CPC is too high. What do you do?</div><div class="answer">Check Quality Score, review keyword relevance, test new ad copy, add long-tail keywords.</div></div>
+    <div class="qa-card"><div class="question">No conversions. What do you check?</div><div class="answer">Conversion tracking, landing page, ad relevance, audience targeting, keyword intent.</div></div>
+    <div class="qa-card"><div class="question">Budget running out fast?</div><div class="answer">Reduce bids, pause poor performers, add negatives, adjust schedule.</div></div>
+    <div class="qa-card"><div class="question">High impressions, low clicks?</div><div class="answer">Ad copy not compelling, low Quality Score, wrong targeting. Test new headlines.</div></div>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p><strong>Basics:</strong> PPC, CTR, Quality Score. <strong>Google Ads:</strong> Ad Rank, Negative Keywords, Remarketing, Extensions. <strong>Scenarios:</strong> CPC zyada? Conversions nahi? Budget khatam? — inke answers practice karo.</p>
+  </div>
+</div>
+
+<!-- ========== PAGE 18: CHAPTER 17 - Portfolio Projects ========== -->
+<div class="page" id="page-18" data-title="Ch 17: Portfolio Projects">
+  <div class="chapter-divider"><span class="chapter-badge">Chapter 17</span><h2 class="chapter-title">Portfolio Projects <span>Build & Showcase</span></h2></div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 01</span>
+    <h4>Google Ads Search Campaign</h4>
+    <ul>
+      <li>Create account with ₹500 budget</li>
+      <li>Build search campaign for local business</li>
+      <li>Research 20+ keywords</li>
+      <li>Write 5 ad copy variations</li>
+      <li>Set up conversion tracking</li>
+      <li>Run 2 weeks, create performance report</li>
+      <li>Document optimization steps</li>
+    </ul>
+  </div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 02</span>
+    <h4>Meta Ads Campaign</h4>
+    <ul>
+      <li>Brand awareness campaign on FB/IG</li>
+      <li>Design 3 creatives (Canva)</li>
+      <li>Target specific audience</li>
+      <li>Run 1 week, analyze results</li>
+    </ul>
+  </div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 03</span>
+    <h4>Keyword Research Report</h4>
+    <ul>
+      <li>Pick any industry</li>
+      <li>Research 100+ keywords</li>
+      <li>Categorize by intent</li>
+      <li>Analyze competition</li>
+      <li>Suggest negative keywords</li>
+    </ul>
+  </div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 04</span>
+    <h4>Competitor Analysis</h4>
+    <ul>
+      <li>Pick 3 competitors</li>
+      <li>Analyze Google + Meta Ads</li>
+      <li>Review landing pages</li>
+      <li>Create recommendations</li>
+    </ul>
+  </div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 05</span>
+    <h4>Performance Report Template</h4>
+    <ul>
+      <li>Weekly + Monthly templates (Sheets)</li>
+      <li>All key metrics with formulas</li>
+      <li>Charts and visualizations</li>
+    </ul>
+  </div>
+
+  <div class="project-card">
+    <span class="project-tag">Project 06</span>
+    <h4>Landing Page Audit</h4>
+    <ul>
+      <li>Audit 3 landing pages</li>
+      <li>Design, mobile, CTA, speed</li>
+      <li>Document recommendations</li>
+    </ul>
+  </div>
+
+  <div class="content-card hindi">
+    <div class="hindi-label">हिंदी में</div>
+    <p>Yeh 6 projects banao. Screenshot lo, Drive folder banao, Before/After dikhao. Portfolio = Proof of skills. Interview mein yeh sab dikhaao.</p>
+  </div>
+</div>
+
+<!-- ========== PAGE 19: FINISH ========== -->
+<div class="page" id="page-19" data-title="Book Complete!">
+  <div class="finish-page">
+    <h2>You Are <span>Ready!</span></h2>
+    <p>You've completed the entire PPC Mastery Book. Now start practicing, building projects, and preparing for your interview.</p>
+    <div class="stats-row">
+      <div class="stat-item"><div class="stat-num">17</div><div class="stat-label">Chapters</div></div>
+      <div class="stat-item"><div class="stat-num">50+</div><div class="stat-label">Questions</div></div>
+      <div class="stat-item"><div class="stat-num">6</div><div class="stat-label">Projects</div></div>
+      <div class="stat-item"><div class="stat-num">12</div><div class="stat-label">Weeks</div></div>
+    </div>
+    <button class="reset-btn" onclick="resetBook()">🔄 Reset & Read Again</button>
+  </div>
+</div>
+
+</div><!-- end page-container -->
+
+<!-- Bottom Navigation -->
+<nav class="bottom-nav">
+  <button class="nav-btn btn-back" id="btnBack" onclick="goBack()" disabled>← Back</button>
+  <button class="nav-btn btn-mark-read" id="btnMarkRead" onclick="markAsRead()">✓ Mark as Read & Continue</button>
+  <button class="nav-btn btn-next" id="btnNext" onclick="goNext()" disabled>Next →</button>
+</nav>
+
+<script>
+  // ========== STATE ==========
+  const TOTAL_PAGES = 20; // 0 to 19
+  let currentPage = 0;
+  let readPages = new Set();
+
+  // Load from localStorage
+  function loadState() {
+    try {
+      const saved = localStorage.getItem('ppc_book_state');
+      if (saved) {
+        const data = JSON.parse(saved);
+        readPages = new Set(data.readPages || []);
+        currentPage = data.currentPage || 0;
+      }
+    } catch(e) {}
+  }
+
+  function saveState() {
+    localStorage.setItem('ppc_book_state', JSON.stringify({
+      readPages: [...readPages],
+      currentPage: currentPage
+    }));
+  }
+
+  // ========== NAVIGATION ==========
+  function showPage(pageNum) {
+    // Hide all pages
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+    // Show target page
+    const page = document.getElementById('page-' + pageNum);
+    if (page) {
+      page.classList.add('active');
+      currentPage = pageNum;
+      updateUI();
+      saveState();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  function goToPage(pageNum) {
+    // Can only go to page if it's the next unlocked page or already read
+    if (pageNum <= currentPage + 1 || readPages.has(pageNum)) {
+      showPage(pageNum);
+    }
+  }
+
+  function goBack() {
+    if (currentPage > 0) {
+      showPage(currentPage - 1);
+    }
+  }
+
+  function goNext() {
+    if (currentPage < TOTAL_PAGES - 1 && readPages.has(currentPage)) {
+      showPage(currentPage + 1);
+    }
+  }
+
+  function markAsRead() {
+    readPages.add(currentPage);
+    saveState();
+    updateUI();
+
+    // Auto-advance to next page
+    if (currentPage < TOTAL_PAGES - 1) {
+      setTimeout(() => {
+        showPage(currentPage + 1);
+      }, 300);
+    }
+  }
+
+  function resetBook() {
+    if (confirm('Sab progress delete ho jayega. Reset karein?')) {
+      readPages.clear();
+      currentPage = 0;
+      saveState();
+      showPage(0);
+    }
+  }
+
+  // ========== UI UPDATE ==========
+  function updateUI() {
+    // Page info
+    const page = document.getElementById('page-' + currentPage);
+    const title = page ? page.dataset.title : '';
+    document.getElementById('pageInfo').textContent = title;
+
+    // Read count
+    document.getElementById('readCountText').textContent = readPages.size + ' / ' + TOTAL_PAGES + ' read';
+
+    // Progress bar
+    const progress = (readPages.size / TOTAL_PAGES) * 100;
+    document.getElementById('progressBar').style.width = progress + '%';
+
+    // Back button
+    document.getElementById('btnBack').disabled = currentPage === 0;
+
+    // Mark as Read button
+    const btnRead = document.getElementById('btnMarkRead');
+    if (readPages.has(currentPage)) {
+      btnRead.textContent = '✓ Read';
+      btnRead.classList.add('read-done');
+    } else {
+      btnRead.textContent = '✓ Mark as Read & Continue';
+      btnRead.classList.remove('read-done');
+    }
+
+    // Next button
+    document.getElementById('btnNext').disabled = !readPages.has(currentPage) || currentPage >= TOTAL_PAGES - 1;
+
+    // Update TOC
+    document.querySelectorAll('.toc-item').forEach((item, i) => {
+      const pageNum = i + 2; // TOC is page 1, chapters start at page 2
+      if (readPages.has(pageNum)) {
+        item.classList.add('read');
+      } else {
+        item.classList.remove('read');
+      }
+    });
+  }
+
+  // ========== INIT ==========
+  loadState();
+  showPage(currentPage);
+</script>
+
+</body>
+</html>

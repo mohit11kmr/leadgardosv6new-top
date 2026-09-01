@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface SessionItem {
   id: string;
@@ -20,12 +20,14 @@ export function SecuritySettingsView() {
     queryFn: () => api<SessionItem[]>('/settings/sessions'),
   });
 
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
   const revokeMutation = useMutation({
-    mutationFn: (sessionId: string) =>
-      api(`/settings/sessions/${sessionId}`, { method: 'DELETE' }),
+    mutationFn: (sessionId: string) => api(`/settings/sessions/${sessionId}`, { method: 'DELETE' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings-sessions'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to revoke session'),
   });
 
   return (
@@ -38,6 +40,8 @@ export function SecuritySettingsView() {
           </p>
         </div>
       </div>
+
+      {mutationError && <div className="errorBanner">{mutationError}</div>}
 
       <div className="grid grid-cols-4 gap-6">
         <aside className="col-span-1">

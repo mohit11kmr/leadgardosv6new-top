@@ -1,8 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from '@leadguard/database';
 import { validateExternalUrl } from '@leadguard/shared';
+import { encryptSecret } from '@leadguard/shared/dist/server-only/secret-encryption.js';
 import { outboxService, webhookQueue } from './outboxService.js';
 import { randomUUID } from 'node:crypto';
+import { config } from '@leadguard/config';
 
 export class WebhookService {
   /**
@@ -69,7 +71,10 @@ export class WebhookService {
       data: {
         organizationId,
         url: data.url,
-        secretHash: rawSecret,
+        // Encrypted at rest (AES-256-GCM) — the field is misleadingly named
+        // "secretHash" but must be recoverable (not one-way hashed) because
+        // the worker needs the raw secret to sign every outgoing webhook.
+        secretHash: encryptSecret(rawSecret, config.WEBHOOK_SECRET_ENCRYPTION_KEY),
         events: data.events.length > 0 ? data.events : ['*'],
         description: data.description,
       },

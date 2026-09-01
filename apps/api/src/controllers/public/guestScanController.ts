@@ -10,6 +10,9 @@ export const guestScanRouter = Router();
 const guestScanSchema = z.object({
   url: z.string().url('Invalid URL format'),
   idempotencyKey: z.string().min(8).max(100).optional(),
+  // Optional: lets us email the visitor their report link when the scan
+  // completes, so an abandoned/closed tab isn't a dead end.
+  email: z.string().email().max(200).optional(),
 });
 
 const guestFunnelEventSchema = z.object({
@@ -27,7 +30,7 @@ guestScanRouter.post('/free-scan', async (req: Request, res: Response, next: Nex
     const idempotencyKey = req.headers['idempotency-key'] as string | undefined || input.idempotencyKey;
     const clientIp = getClientIp(req);
 
-    const result = await guestScanService.createGuestScan(input.url, idempotencyKey, clientIp);
+    const result = await guestScanService.createGuestScan(input.url, idempotencyKey, clientIp, input.email);
 
     res.status(201).json({
       success: true,

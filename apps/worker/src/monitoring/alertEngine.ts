@@ -1,6 +1,7 @@
 import { db } from '@leadguard/database';
 import type { Severity } from '@prisma/client';
 import type { DetectedRegression } from './types.js';
+import { emailProvider } from './notifications/emailProvider.js';
 
 export interface AlertPolicy {
   notifyEmail?: boolean;
@@ -312,7 +313,60 @@ export class AlertEngine {
       }
     }
 
+    // AlertPolicy.notifyEmail was defined on the type but never actually
+    // read anywhere — no alert has ever triggered an email, regardless of
+    // this flag or of NotificationPreference rows. Default is "on" (opt-out
+    // via policy.notifyEmail === false) to match NotificationPreference's
+    // own default of enabled: true.
+    if (createdAlerts.length > 0 && options.policy?.notifyEmail !== false) {
+      await this.notifyRecipients(organizationId, websiteId, createdAlerts).catch((err) =>
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'worker',
+            event: 'alert_email_notify_failed',
+            organizationId,
+            websiteId,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
+        )
+      );
+    }
+
     return createdAlerts;
+  }
+
+  private async notifyRecipients(
+    organizationId: string,
+    websiteId: string,
+    alerts: Array<{ severity: Severity; title: string; message: string }>
+  ) {
+    const preferences = await db.notificationPreference.findMany({
+      where: {
+        organizationId,
+        channel: 'EMAIL',
+        enabled: true,
+        eventTypes: { has: 'MONITORING_ALERT' },
+      },
+      include: { user: { select: { email: true } } },
+    });
+    if (preferences.length === 0) return;
+
+    const website = await db.website.findUnique({ where: { id: websiteId }, select: { domain: true, name: true } });
+    const target = website?.domain || website?.name || websiteId;
+    const subject = `[LeadGuard] ${alerts.length} new monitoring alert${alerts.length > 1 ? 's' : ''} for ${target}`;
+    const body = alerts.map((a) => `[${a.severity}] ${a.title}\n${a.message}`).join('\n\n');
+
+    await Promise.all(
+      preferences.map((pref) =>
+        emailProvider.sendEmail({
+          to: pref.user.email,
+          subject,
+          body,
+          metadata: { organizationId, websiteId, alertCount: alerts.length },
+        })
+      )
+    );
   }
 }
 

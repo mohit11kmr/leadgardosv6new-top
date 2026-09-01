@@ -122,7 +122,7 @@ export class GeminiProvider implements AIProvider {
 
   constructor(modelName = 'gemini-1.5-flash', apiKey?: string) {
     this.modelName = process.env.AI_MODEL || modelName;
-    this.apiKey = apiKey !== undefined ? apiKey : process.env.GEMINI_API_KEY;
+    this.apiKey = apiKey !== undefined ? apiKey : config.GEMINI_API_KEY;
     if (this.apiKey === 'MY_GEMINI_API_KEY' || !this.apiKey) {
       this.apiKey = undefined;
     }
@@ -288,8 +288,8 @@ export async function processPitchGenerationJob(jobData: {
     };
 
     let provider: AIProvider;
-    if (process.env.AI_PROVIDER === 'GEMINI') {
-      provider = new GeminiProvider('gemini-1.5-flash', process.env.GEMINI_API_KEY);
+    if (config.AI_PROVIDER === 'GEMINI') {
+      provider = new GeminiProvider('gemini-1.5-flash', config.GEMINI_API_KEY);
     } else {
       provider = new TemplateAIProvider();
     }

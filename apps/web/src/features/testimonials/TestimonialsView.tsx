@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface TestimonialItem {
   id: string;
@@ -22,6 +22,7 @@ export function TestimonialsView() {
   const [role, setRole] = useState('');
   const [content, setContent] = useState('');
   const [rating, setRating] = useState(5);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: testimonials, isLoading, error } = useQuery({
     queryKey: ['testimonials'],
@@ -42,6 +43,7 @@ export function TestimonialsView() {
       setContent('');
       queryClient.invalidateQueries({ queryKey: ['testimonials'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to create testimonial'),
   });
 
   const statusMutation = useMutation({
@@ -53,6 +55,7 @@ export function TestimonialsView() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testimonials'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to update testimonial status'),
   });
 
   const deleteMutation = useMutation({
@@ -60,6 +63,7 @@ export function TestimonialsView() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testimonials'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to delete testimonial'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

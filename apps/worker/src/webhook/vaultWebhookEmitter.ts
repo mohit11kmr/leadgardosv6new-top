@@ -1,7 +1,6 @@
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { randomUUID } from 'node:crypto';
-import { db } from '@leadguard/database';
+import { db, type PrismaTransactionClient } from '@leadguard/database';
 import { config } from '@leadguard/config';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -29,6 +28,7 @@ export interface VaultRunWebhookPayload {
   findingsCount: number;
   retestedFindings: number;
   fixedFindings: number;
+  verifiedFindings: number;
   pagesDiscovered: number;
   pagesFetched: number;
   pagesFailed: number;
@@ -37,17 +37,7 @@ export interface VaultRunWebhookPayload {
   summary: Record<string, unknown> | null;
 }
 
-/**
- * Emits the `security.audit.completed` event via the transactional outbox and
- * dispatches to every matching enabled webhook endpoint (LG-021/LG-022).
- * Mirrors the API OutboxService.emitEvent contract.
- */
-export async function emitVaultCompleted({
-  organizationId,
-  runId,
-  websiteId,
-  run,
-}: {
+export interface VaultCompletedInput {
   organizationId: string;
   runId: string;
   websiteId: string;
@@ -58,6 +48,7 @@ export async function emitVaultCompleted({
     findingsCount: number;
     retestedFindings: number;
     fixedFindings: number;
+    verifiedFindings: number;
     pagesDiscovered: number;
     pagesFetched: number;
     pagesFailed: number;
@@ -65,8 +56,10 @@ export async function emitVaultCompleted({
     completedAt: Date | null;
     summary: unknown;
   };
-}) {
-  const payload: VaultRunWebhookPayload = {
+}
+
+function buildPayload({ organizationId, runId, websiteId, run }: VaultCompletedInput): VaultRunWebhookPayload {
+  return {
     event: 'security.audit.completed',
     runId,
     websiteId,
@@ -77,6 +70,7 @@ export async function emitVaultCompleted({
     findingsCount: run.findingsCount,
     retestedFindings: run.retestedFindings,
     fixedFindings: run.fixedFindings,
+    verifiedFindings: run.verifiedFindings,
     pagesDiscovered: run.pagesDiscovered,
     pagesFetched: run.pagesFetched,
     pagesFailed: run.pagesFailed,
@@ -84,47 +78,107 @@ export async function emitVaultCompleted({
     completedAt: run.completedAt ? run.completedAt.toISOString() : null,
     summary: (run.summary as Record<string, unknown> | null) ?? null,
   };
+}
 
-  const outboxEvent = await db.outboxEvent.create({
+/**
+ * Phase 1 of the transactional outbox: writes the OutboxEvent row only.
+ * Accepts either the default `db` client or a `tx` inside `db.$transaction`,
+ * so callers that need the outbox write to commit atomically with the
+ * triggering state change (e.g. VaultAuditRun.status flipping to COMPLETED)
+ * can pass `tx` and never end up with a completed run that has no
+ * corresponding outbox row if the process crashes right after.
+ */
+export async function createVaultCompletedOutboxEvent(
+  client: PrismaTransactionClient,
+  input: VaultCompletedInput
+) {
+  const payload = buildPayload(input);
+  const outboxEvent = await client.outboxEvent.create({
     data: {
-      organizationId,
+      organizationId: input.organizationId,
       eventType: VAULT_COMPLETED_EVENT,
       aggregateType: 'VaultAuditRun',
-      aggregateId: runId,
+      aggregateId: input.runId,
       payload: payload as object,
       status: 'PENDING',
     },
   });
+  return { outboxEvent, payload };
+}
 
+/**
+ * Phase 2: looks up matching webhook endpoints and enqueues delivery jobs for
+ * an already-created outbox event, then marks it PUBLISHED. Not part of any
+ * DB transaction (Redis/BullMQ can't participate in one) — safe to call
+ * fire-and-forget after the phase-1 transaction commits, because if it fails
+ * partway the event simply stays PENDING and outboxReplay.ts retries it.
+ * deliveryId is deterministic (outboxEvent.id + endpoint.id) so that retry
+ * never double-delivers to an endpoint that already got the job.
+ */
+export async function dispatchOutboxEvent(
+  outboxEvent: { id: string },
+  payload: Record<string, unknown>,
+  organizationId: string,
+  eventType: string
+) {
   const endpoints = await db.webhookEndpoint.findMany({
     where: { organizationId, enabled: true },
   });
   const matchingEndpoints = endpoints.filter(
-    (ep) => ep.events.includes(VAULT_COMPLETED_EVENT) || ep.events.includes('*')
+    (ep) => ep.events.includes(eventType) || ep.events.includes('*')
   );
 
+  let dispatchFailed = false;
   for (const endpoint of matchingEndpoints) {
-    const deliveryId = randomUUID();
-    await webhookQueue.add(
-      'deliver-webhook',
-      {
-        deliveryId,
-        webhookEndpointId: endpoint.id,
-        organizationId,
-        eventType: VAULT_COMPLETED_EVENT,
-        url: endpoint.url,
-        secretHash: endpoint.secretHash,
-        payload,
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-      { jobId: `webhook_${deliveryId}` }
-    );
+    const deliveryId = `${outboxEvent.id}:${endpoint.id}`;
+    try {
+      await webhookQueue.add(
+        'deliver-webhook',
+        {
+          deliveryId,
+          webhookEndpointId: endpoint.id,
+          organizationId,
+          eventType,
+          url: endpoint.url,
+          secretHash: endpoint.secretHash,
+          payload,
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+        { jobId: `webhook_${deliveryId}` }
+      );
+    } catch (err) {
+      dispatchFailed = true;
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'worker',
+          event: 'webhook_enqueue_failed',
+          outboxEventId: outboxEvent.id,
+          webhookEndpointId: endpoint.id,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        })
+      );
+    }
   }
 
-  await db.outboxEvent.update({
-    where: { id: outboxEvent.id },
-    data: { status: 'PUBLISHED', processedAt: new Date() },
-  });
+  // Only mark PUBLISHED if every endpoint was successfully enqueued. If any
+  // failed, the event stays PENDING so outboxReplay.ts retries it.
+  if (!dispatchFailed) {
+    await db.outboxEvent.update({
+      where: { id: outboxEvent.id },
+      data: { status: 'PUBLISHED', processedAt: new Date() },
+    });
+  }
+}
 
+/**
+ * Convenience wrapper combining phase 1 + phase 2 for callers that don't need
+ * the outbox write to be atomic with an outside transaction (e.g. tests, or
+ * one-off emitters). vaultScan.ts uses the two phases directly instead, so it
+ * can put phase 1 inside the same transaction as the VaultAuditRun update.
+ */
+export async function emitVaultCompleted(input: VaultCompletedInput) {
+  const { outboxEvent, payload } = await createVaultCompletedOutboxEvent(db, input);
+  await dispatchOutboxEvent(outboxEvent, payload as unknown as Record<string, unknown>, input.organizationId, VAULT_COMPLETED_EVENT);
   return outboxEvent;
 }

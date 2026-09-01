@@ -50,7 +50,8 @@ export class GuestScanService {
   async createGuestScan(
     url: string,
     idempotencyKey?: string,
-    clientIp?: string
+    clientIp?: string,
+    email?: string
   ): Promise<GuestScanResult> {
     if (!url) {
       throw this.createError('INVALID_REQUEST', 'URL is required');
@@ -104,6 +105,12 @@ export class GuestScanService {
     });
 
     if (existingActiveGuestAudit) {
+      // Backfill the email if this resubmission provided one the original
+      // request didn't (e.g. visitor re-clicked "scan" after typing their
+      // email the second time).
+      if (email && !existingActiveGuestAudit.guestEmail) {
+        await db.audit.update({ where: { id: existingActiveGuestAudit.id }, data: { guestEmail: email } });
+      }
       return this.formatGuestScanResult(existingActiveGuestAudit);
     }
 
@@ -114,6 +121,7 @@ export class GuestScanService {
         status: 'QUEUED',
         idempotencyKey: idempotencyKey || null,
         scoringVersion: 'v3',
+        guestEmail: email || null,
       },
       include: {
         website: { select: { id: true, url: true, name: true, domain: true } },
@@ -175,17 +183,25 @@ export class GuestScanService {
       return null;
     }
 
+    // The `findings` relation above is capped (take: 5) so the free scan
+    // only ever shows a teaser — but the true count must come from a
+    // separate, uncapped query. Previously this used the capped array's own
+    // length, so totalFindings could never exceed 5 even when the real
+    // audit found many more, silently breaking the "N more issues — sign up
+    // to unlock" conversion hook.
+    const totalFindings = await db.auditFinding.count({ where: { auditId: audit.id } });
+
     if (audit.status === 'COMPLETED') {
       await funnelEventService.record({
         organizationId: orgId,
         type: FUNNEL_EVENTS.FREE_SCAN_COMPLETED,
         websiteId: audit.website?.id,
         auditId: audit.id,
-        data: { findingsCount: audit.findings?.length ?? 0 },
+        data: { findingsCount: totalFindings },
       });
     }
 
-    return this.formatPublicAuditDto(audit);
+    return this.formatPublicAuditDto(audit, totalFindings);
   }
 
   async getGuestScanStatus(scanId: string): Promise<{ status: string; progress: number; progressStage: string } | null> {
@@ -282,7 +298,9 @@ export class GuestScanService {
     return sanitizeFindingEvidence(evidence);
   }
 
-  private formatPublicAuditDto(audit: any): PublicAuditDTO {
+  private formatPublicAuditDto(audit: any, totalFindings?: number): PublicAuditDTO {
+    const shownCount = audit.findings ? audit.findings.length : 0;
+    const total = totalFindings ?? shownCount;
     return {
       id: audit.id,
       website: {
@@ -316,7 +334,8 @@ export class GuestScanService {
             normalizedIssueKey: f.normalizedIssueKey,
           }))
         : undefined,
-      totalFindings: audit.findings ? audit.findings.length : 0,
+      totalFindings: total,
+      lockedFindingsCount: Math.max(0, total - shownCount),
       // No fabricated aggregate revenue/opportunity figure is emitted here.
       // Any visitor-facing estimate must be computed client-side from the
       // user's own inputs with explicit assumptions (§ no-fake-data policy).

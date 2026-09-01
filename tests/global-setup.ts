@@ -20,6 +20,8 @@ export default async function globalSetup() {
   process.env.RAZORPAY_KEY_ID ??= 'rzp_test_placeholder_key_id';
   process.env.RAZORPAY_KEY_SECRET ??= 'placeholder_key_secret';
   process.env.RAZORPAY_WEBHOOK_SECRET ??= 'placeholder_webhook_secret';
+  process.env.WEBHOOK_SECRET_ENCRYPTION_KEY ??= 'c'.repeat(64);
+  process.env.ENABLE_JS_RENDERED_RESCAN ??= 'false';
 
   const { db } = await import('@leadguard/database');
   const { billingService } = await import('../apps/api/src/services/billingService.js');

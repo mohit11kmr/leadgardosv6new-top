@@ -51,6 +51,7 @@ export interface PublicAuditDTO {
   score: PublicAuditScoreDTO | null;
   findings?: PublicAuditFindingDTO[];
   totalFindings: number;
+  lockedFindingsCount: number;
   estimatedOpportunityLoss?: OpportunityLossEstimate | null;
   createdAt: string;
 }

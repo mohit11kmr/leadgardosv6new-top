@@ -1,4 +1,5 @@
 import { fetchPage, classifyError } from '../audit/fetcher.js';
+import { inspectTls } from '@leadguard/shared';
 import type { HealthCheckResult } from './types.js';
 
 export async function performHealthCheck(
@@ -13,12 +14,28 @@ export async function performHealthCheck(
     const isAvailable = page.statusCode ? page.statusCode >= 200 && page.statusCode < 400 : false;
     const isHttps = targetUrl.startsWith('https://');
 
+    // Real TLS inspection (actual certificate handshake + expiry), same
+    // helper the VaultGuard security scan already uses — this used to be a
+    // hardcoded "expires 90 days from now" regardless of the real
+    // certificate, which meant the "TLS Certificate Expiring Soon" alert
+    // could never fire accurately.
+    let tlsValid = false;
+    let tlsExpiresAt: Date | null = null;
+    if (isHttps) {
+      const tlsResult = await inspectTls(targetUrl);
+      tlsValid = tlsResult.certificateValid;
+      tlsExpiresAt =
+        tlsResult.daysRemaining !== undefined
+          ? new Date(Date.now() + tlsResult.daysRemaining * 86400000)
+          : null;
+    }
+
     return {
       isAvailable,
       httpStatus: page.statusCode || null,
       responseTimeMs: duration,
-      tlsValid: isHttps && isAvailable,
-      tlsExpiresAt: isHttps ? new Date(Date.now() + 90 * 86400000) : null,
+      tlsValid,
+      tlsExpiresAt,
       redirectChain: page.redirectChain || [],
       contentType: page.contentType || null,
       html: page.html || null,

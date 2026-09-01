@@ -173,6 +173,7 @@ model User {
   adminAuditLogs          AdminAuditLog[]
   notificationPreferences NotificationPreference[]
   vaultIgnoredFindings    VaultAuditFinding[]
+  blogPosts               BlogPost[]
 }
 
 model Account {
@@ -345,6 +346,10 @@ model Audit {
   progressStage          String                  @default("queued")
   idempotencyKey         String?
   scoringVersion         String                  @default("v3")
+  // Only ever set by the public/free-scan guest flow (never by authenticated
+  // org audits) — lets us email the visitor their report link when the scan
+  // completes, so a closed tab / abandoned session isn't a dead end.
+  guestEmail             String?
   queuedAt               DateTime                @default(now())
   startedAt              DateTime?
   completedAt            DateTime?
@@ -501,6 +506,7 @@ model VaultAuditRun {
   cancelledAt      DateTime?
   retestedFindings Int            @default(0)
   fixedFindings    Int            @default(0)
+  verifiedFindings Int            @default(0)
   createdAt        DateTime       @default(now())
   website          Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
   audit            Audit?         @relation(fields: [auditId], references: [id], onDelete: Cascade)
@@ -1180,6 +1186,24 @@ model AdminAuditLog {
 
   @@index([userId, createdAt])
   @@index([resourceType, createdAt])
+}
+
+model BlogPost {
+  id              String    @id @default(uuid())
+  slug            String    @unique
+  title           String
+  excerpt         String?
+  content         String
+  coverImageUrl   String?
+  authorName      String    @default("LeadGuard Team")
+  status          String    @default("DRAFT") // DRAFT, PUBLISHED, ARCHIVED
+  publishedAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  createdBy       User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt])
 }
 
 model NotificationPreference {

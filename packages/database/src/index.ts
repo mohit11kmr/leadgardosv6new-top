@@ -1,4 +1,10 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
+
+// The type of the `tx` argument inside db.$transaction(async (tx) => {...}) —
+// shared so services can accept "either the default client or a transaction
+// client" and let callers choose whether a write needs to be atomic with
+// other writes.
+export type PrismaTransactionClient = Prisma.TransactionClient;
 
 // C12 audit fix: never silently connect to a localhost fallback in production.
 const databaseUrl =

@@ -1,4 +1,5 @@
 import { db } from '@leadguard/database';
+import { config } from '@leadguard/config';
 import {
   buildBusinessImpact,
   buildExecutiveSummary,
@@ -11,10 +12,13 @@ import {
   aggregateWebsiteSignals,
   deduplicateFindings,
   evaluateWebsiteLevelScanners,
+  mergeRenderedSignals,
 } from './aggregation.js';
 import { BoundedCrawler } from './crawler.js';
 import { finalizeAudit } from './finalizer.js';
 import { recordFailedPage, upsertAuditPage } from './persistence.js';
+import { fetchRenderedHtml } from './renderedFetch.js';
+import { sendGuestScanReadyEmail } from './guestScanNotifier.js';
 import { AuditTelemetryTracker } from './telemetry.js';
 import type { AuditExecutionResult, CrawlOptions } from './types.js';
 
@@ -152,7 +156,23 @@ export class AuditOrchestrator {
 
     // 5. Aggregate website signals and evaluate site-level scanners
     telemetry.startStage('aggregation');
-    const signals = aggregateWebsiteSignals(pages);
+    let signals = aggregateWebsiteSignals(pages);
+
+    // 5b. Optional headless-browser rescan of the homepage: catches
+    // tracking/CTA signals only present after client-side JS execution
+    // (SPA sites), merged in a way that can only remove false positives,
+    // never suppress a real static-HTML finding (see mergeRenderedSignals).
+    if (config.ENABLE_JS_RENDERED_RESCAN && pages.length > 0) {
+      const homepage = pages.find((p) => p.depth === 0) ?? pages[0]!;
+      const renderedHtml = await fetchRenderedHtml(homepage.finalUrl || homepage.url, combinedSignal).catch(
+        () => null
+      );
+      if (renderedHtml) {
+        const renderedSignals = aggregateWebsiteSignals([{ ...homepage, html: renderedHtml }]);
+        signals = mergeRenderedSignals(signals, renderedSignals);
+      }
+    }
+
     const siteFindings = await evaluateWebsiteLevelScanners(
       audit.website.normalizedUrl,
       signals,
@@ -216,6 +236,30 @@ export class AuditOrchestrator {
       startedAt,
     });
     telemetry.endStage('finalization', 'finalizationDurationMs');
+
+    // Guest-flow "your scan is ready" email — only ever fires when the
+    // public/free-scan submission captured an email (guestEmail is never
+    // set for authenticated org audits). Fire-and-forget: a delivery
+    // failure must never fail the audit itself.
+    if ((status === 'COMPLETED' || status === 'PARTIAL') && audit.guestEmail) {
+      sendGuestScanReadyEmail({
+        email: audit.guestEmail,
+        auditId,
+        domain: audit.website.domain,
+        overallScore: scores.overall,
+        totalFindings: findings.length,
+      }).catch((err) =>
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'worker',
+            event: 'guest_scan_email_failed',
+            auditId,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
+        )
+      );
+    }
 
     console.log(
       JSON.stringify({

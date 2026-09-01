@@ -1,6 +1,5 @@
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { randomUUID } from 'node:crypto';
 import { db } from '@leadguard/database';
 import { config } from '@leadguard/config';
 
@@ -47,7 +46,10 @@ export async function replayPendingOutboxEvents(
       );
 
       for (const endpoint of matchingEndpoints) {
-        const deliveryId = randomUUID();
+        // Deterministic, matching the original dispatch (see vaultWebhookEmitter.ts /
+        // outboxService.ts) — so replaying an event that already reached some
+        // endpoints reuses their jobId/WebhookDelivery row instead of re-delivering.
+        const deliveryId = `${event.id}:${endpoint.id}`;
         await webhookQueue.add(
           'deliver-webhook',
           {

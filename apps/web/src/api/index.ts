@@ -3,6 +3,7 @@ export * from './auth.js';
 export * from './organizations.js';
 export * from './websites.js';
 export * from './audits.js';
+export * from './agency.js';
 export * from './intelligence.js';
 export * from './billing.js';
 export * from './monitoring.js';

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export interface NotificationPrefs {
   id: string;
@@ -21,6 +21,7 @@ export function NotificationSettingsView() {
   const [enabled, setEnabled] = useState(true);
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: prefs, isLoading, error } = useQuery({
     queryKey: ['settings-notifications'],
@@ -45,6 +46,7 @@ export function NotificationSettingsView() {
       setTimeout(() => setSavedSuccess(false), 3000);
       queryClient.invalidateQueries({ queryKey: ['settings-notifications'] });
     },
+    onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : 'Failed to save notification preferences'),
   });
 
   const toggleEvent = (eventId: string) => {
@@ -96,6 +98,8 @@ export function NotificationSettingsView() {
               Notification preferences saved successfully!
             </div>
           )}
+
+          {mutationError && <div className="errorBanner">{mutationError}</div>}
 
           {prefs && (
             <div className="card p-6">

@@ -1,5 +1,6 @@
 import {
   inspectTls,
+  scanCartSignals,
   scanFormsAndCtas,
   scanSecurityHeaders,
   scanTelephone,
@@ -19,6 +20,10 @@ export interface WebsiteSignals {
   hasGa4: boolean;
   hasGtm: boolean;
   primaryHeaders: Record<string, string>;
+  isStore: boolean;
+  hasCartLink: boolean;
+  hasCheckoutLink: boolean;
+  brokenCartOrCheckoutUrls: string[];
 }
 
 export function aggregateWebsiteSignals(pages: PageRecord[]): WebsiteSignals {
@@ -30,6 +35,10 @@ export function aggregateWebsiteSignals(pages: PageRecord[]): WebsiteSignals {
   let hasGa4 = false;
   let hasGtm = false;
   let primaryHeaders: Record<string, string> = {};
+  let isStore = false;
+  let hasCartLink = false;
+  let hasCheckoutLink = false;
+  const brokenCartOrCheckoutUrls: string[] = [];
 
   if (pages.length > 0) {
     primaryHeaders = pages[0]!.headers;
@@ -50,6 +59,14 @@ export function aggregateWebsiteSignals(pages: PageRecord[]): WebsiteSignals {
     if (tracking.metaPixel.status !== 'NOT_DETECTED') hasMetaPixel = true;
     if (tracking.ga4.status !== 'NOT_DETECTED') hasGa4 = true;
     if (tracking.gtm.status !== 'NOT_DETECTED') hasGtm = true;
+
+    const cart = scanCartSignals(page);
+    if (cart.hasStoreIndicator) isStore = true;
+    if (cart.hasCartLink) hasCartLink = true;
+    if (cart.hasCheckoutLink) hasCheckoutLink = true;
+    if (cart.isCartOrCheckoutPage && page.statusCode >= 400) {
+      brokenCartOrCheckoutUrls.push(page.finalUrl || page.url);
+    }
   }
 
   return {
@@ -61,6 +78,10 @@ export function aggregateWebsiteSignals(pages: PageRecord[]): WebsiteSignals {
     hasGa4,
     hasGtm,
     primaryHeaders,
+    isStore,
+    hasCartLink,
+    hasCheckoutLink,
+    brokenCartOrCheckoutUrls,
   };
 }
 
@@ -261,7 +282,58 @@ export async function evaluateWebsiteLevelScanners(
     findings.push(...secRes.findings);
   }
 
-  // 6. Dedicated TLS inspector
+  // 6. Cart Leakage Monitor — only evaluated for sites showing real purchase
+  // intent (isStore), so lead-gen/consultancy sites are never flagged for
+  // not having a cart.
+  if (signals.isStore) {
+    if (signals.brokenCartOrCheckoutUrls.length > 0) {
+      findings.push({
+        ruleId: 'LG-021',
+        internalKey: 'CART_CHECKOUT_BROKEN',
+        normalizedIssueKey: 'CART_CHECKOUT_BROKEN',
+        category: 'LEAD',
+        scope: 'WEBSITE',
+        severity: 'CRITICAL',
+        title: 'Cart or checkout page is broken',
+        description: `${signals.brokenCartOrCheckoutUrls.length} cart/checkout URL(s) returned an error response during the crawl.`,
+        affectedUrl: signals.brokenCartOrCheckoutUrls[0],
+        evidence: {
+          source: 'website_scan',
+          observed: signals.brokenCartOrCheckoutUrls.join(', '),
+          location: siteUrl,
+          why: 'A broken cart or checkout page directly blocks every purchase on the site — this is a direct revenue stop, not a soft lead-quality issue.',
+          recommendation: 'Fix the cart/checkout route immediately and verify the full purchase flow end-to-end.',
+        },
+        recommendation: 'Restore the cart/checkout page and re-test the full purchase flow.',
+        scoreImpact: 25,
+        businessImpact: 'Every visitor who reaches checkout is blocked from completing a purchase.',
+      });
+    } else if (!signals.hasCartLink && !signals.hasCheckoutLink) {
+      findings.push({
+        ruleId: 'LG-021',
+        internalKey: 'CART_LINK_MISSING',
+        normalizedIssueKey: 'CART_LINK_MISSING',
+        category: 'LEAD',
+        scope: 'WEBSITE',
+        severity: 'HIGH',
+        title: 'Store shows purchase intent but no cart/checkout link was found',
+        description: 'Pages show "Add to Cart"/"Buy Now" style purchase language, but no link to a cart or checkout page was detected on any crawled page.',
+        affectedUrl: siteUrl,
+        evidence: {
+          source: 'website_scan',
+          observed: 'Purchase-intent keywords present; 0 cart/checkout links found',
+          location: siteUrl,
+          why: 'Without a reachable cart or checkout link, visitors who want to buy have no way to complete their purchase.',
+          recommendation: 'Ensure every product page links to a working cart/checkout flow.',
+        },
+        recommendation: 'Add a visible, working link to the cart/checkout page from every product page.',
+        scoreImpact: 15,
+        businessImpact: 'Interested buyers cannot find a path to complete checkout, causing silent revenue loss.',
+      });
+    }
+  }
+
+  // 7. Dedicated TLS inspector
   if (siteUrl.startsWith('https://')) {
     try {
       const tlsRes = await inspectTls(siteUrl, context);
@@ -272,6 +344,27 @@ export async function evaluateWebsiteLevelScanners(
   }
 
   return findings;
+}
+
+/**
+ * Merges signals detected from a headless-browser render of the homepage
+ * into the signals detected from the plain-fetch crawl. Only ever upgrades
+ * a "missing" (false) signal to "present" (true) — never downgrades — so
+ * this can only reduce false positives (tracking tags injected by
+ * client-side JS that a plain fetch() can't see), never introduce a false
+ * negative by suppressing a real static-HTML issue.
+ */
+export function mergeRenderedSignals(staticSignals: WebsiteSignals, renderedSignals: WebsiteSignals): WebsiteSignals {
+  return {
+    ...staticSignals,
+    hasWhatsApp: staticSignals.hasWhatsApp || renderedSignals.hasWhatsApp,
+    hasTelephone: staticSignals.hasTelephone || renderedSignals.hasTelephone,
+    hasForm: staticSignals.hasForm || renderedSignals.hasForm,
+    hasCta: staticSignals.hasCta || renderedSignals.hasCta,
+    hasMetaPixel: staticSignals.hasMetaPixel || renderedSignals.hasMetaPixel,
+    hasGa4: staticSignals.hasGa4 || renderedSignals.hasGa4,
+    hasGtm: staticSignals.hasGtm || renderedSignals.hasGtm,
+  };
 }
 
 export function deduplicateFindings(findings: Finding[]): Finding[] {

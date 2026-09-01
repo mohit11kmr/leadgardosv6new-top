@@ -56,6 +56,7 @@ export function setRefreshCookie(res: Response, refreshToken: string) {
     'Path=/api/v1/auth',
     'SameSite=Lax',
     `Max-Age=${30 * 24 * 60 * 60}`,
+    ...(config.COOKIE_DOMAIN ? [`Domain=${config.COOKIE_DOMAIN}`] : []),
     ...(isProd ? ['Secure'] : []),
   ].join('; ');
 
@@ -71,6 +72,7 @@ export function clearRefreshCookie(res: Response) {
     'SameSite=Lax',
     'Max-Age=0',
     'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ...(config.COOKIE_DOMAIN ? [`Domain=${config.COOKIE_DOMAIN}`] : []),
     ...(isProd ? ['Secure'] : []),
   ].join('; ');
 

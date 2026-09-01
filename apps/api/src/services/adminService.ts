@@ -429,6 +429,55 @@ export class AdminService {
 
     return updated;
   }
+
+  /**
+   * Platform-wide conversion funnel: FunnelEvent rows have been recorded
+   * since the guest-scan/express-fix/billing flows were built, but nothing
+   * ever read them back — this was a write-only black hole. Aggregates real
+   * counts per stage (no invented numbers) and derives conversion
+   * percentages relative to the top of the funnel (FREE_SCAN_STARTED).
+   */
+  async getFunnelAnalytics(options: { from?: Date; to?: Date } = {}) {
+    const from = options.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = options.to ?? new Date();
+
+    const grouped = await db.funnelEvent.groupBy({
+      by: ['type'],
+      where: { createdAt: { gte: from, lte: to } },
+      _count: { _all: true },
+    });
+    const countByType = new Map(grouped.map((g) => [g.type, g._count._all]));
+
+    // Ordered top-to-bottom; PAYMENT_FAILED and FULFILLMENT_CREATED are
+    // reported alongside but not part of the primary linear progression
+    // (a failed payment is a leak, not a "next stage").
+    const stageOrder = [
+      'FREE_SCAN_STARTED',
+      'FREE_SCAN_COMPLETED',
+      'RESULT_VIEWED',
+      'EXPRESS_FIX_CLICKED',
+      'CHECKOUT_STARTED',
+      'PAYMENT_SUCCESS',
+    ];
+    const topOfFunnel = countByType.get('FREE_SCAN_STARTED') ?? 0;
+
+    let previousCount: number | null = null;
+    const stages = stageOrder.map((type) => {
+      const count = countByType.get(type) ?? 0;
+      const conversionFromTop = topOfFunnel > 0 ? Math.round((count / topOfFunnel) * 1000) / 10 : 0;
+      const conversionFromPrevious =
+        previousCount !== null && previousCount > 0 ? Math.round((count / previousCount) * 1000) / 10 : null;
+      previousCount = count;
+      return { type, count, conversionFromTopPct: conversionFromTop, conversionFromPreviousStagePct: conversionFromPrevious };
+    });
+
+    return {
+      range: { from: from.toISOString(), to: to.toISOString() },
+      stages,
+      paymentFailedCount: countByType.get('PAYMENT_FAILED') ?? 0,
+      fulfillmentCreatedCount: countByType.get('FULFILLMENT_CREATED') ?? 0,
+    };
+  }
 }
 
 export const adminService = new AdminService();

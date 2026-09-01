@@ -17,7 +17,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { validateExternalUrl } from './security.js';
-import { getClientIp } from '@leadguard/shared';
+import { getClientIp, buildAndValidateWhatsAppLink, getVaultRemediation } from '@leadguard/shared';
 import { auditQueue, vaultQueue } from './queue.js';
 import { intelligenceService } from './services/intelligenceService.js';
 import { apiKeyService } from './services/apiKeyService.js';
@@ -39,6 +39,8 @@ import { adminService } from './services/adminService.js';
 import { settingsService } from './services/settingsService.js';
 import { testimonialService } from './services/testimonialService.js';
 import { webhookService } from './services/webhookService.js';
+import { blogService } from './services/blogService.js';
+import { platformStatsService } from './services/public/platformStatsService.js';
 import { publicAuditRouter } from './controllers/public/publicAuditController.js';
 import { publicReportRouter } from './controllers/public/publicReportController.js';
 import { publicMonitoringRouter } from './controllers/public/publicMonitoringController.js';
@@ -60,6 +62,115 @@ const authSchema = z.object({
   organizationName: z.string().min(2).max(100).optional(),
 });
 const websiteSchema = z.object({ name: z.string().min(1).max(100), url: z.string().url() });
+
+const createReportBodySchema = z.object({
+  auditId: z.string().uuid(),
+  title: z.string().min(1).max(200).optional(),
+  clientWorkspaceId: z.string().uuid().optional(),
+  templateVersion: z.string().max(50).optional(),
+});
+
+const createWebhookBodySchema = z.object({
+  url: z.string().url(),
+  events: z.array(z.string().min(1).max(100)).max(50).optional(),
+  description: z.string().max(500).optional(),
+});
+
+const adminUserStatusBodySchema = z.object({
+  disabled: z.boolean(),
+  reason: z.string().max(500).optional(),
+});
+
+const adminOrgStatusBodySchema = z.object({
+  suspended: z.boolean(),
+  reason: z.string().max(500).optional(),
+});
+
+const adminExpressFixStatusBodySchema = z.object({
+  status: z.enum([
+    'PAYMENT_PENDING',
+    'PAID',
+    'FULFILLMENT_PENDING',
+    'FULFILLMENT_IN_PROGRESS',
+    'FULFILLED',
+    'FULFILLMENT_FAILED',
+  ]),
+  notes: z.string().max(2000).optional(),
+});
+
+const createBlogPostBodySchema = z.object({
+  title: z.string().min(1).max(200),
+  slug: z.string().min(1).max(100).optional(),
+  excerpt: z.string().max(500).optional(),
+  content: z.string().min(1),
+  coverImageUrl: z.string().url().optional(),
+  authorName: z.string().max(100).optional(),
+});
+
+const updateBlogPostBodySchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  excerpt: z.string().max(500).optional(),
+  content: z.string().min(1).optional(),
+  coverImageUrl: z.string().url().optional(),
+  authorName: z.string().max(100).optional(),
+});
+
+const blogPostStatusBodySchema = z.object({
+  status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']),
+});
+
+const settingsProfileBodySchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  timezone: z.string().max(100).optional(),
+  locale: z.string().max(20).optional(),
+});
+
+const settingsNotificationsBodySchema = z.object({
+  eventTypes: z
+    .array(
+      z.enum([
+        'AUDIT_COMPLETED',
+        'AUDIT_FAILED',
+        'MONITORING_ALERT',
+        'MONITORING_RESOLVED',
+        'REPORT_READY',
+        'PAYMENT_SUCCEEDED',
+        'SUBSCRIPTION_CHANGED',
+        'VAULT_AUDIT_COMPLETED',
+        'VAULT_REPORT_READY',
+      ])
+    )
+    .optional(),
+  enabled: z.boolean().optional(),
+});
+
+const whatsappLinkDebugBodySchema = z.object({
+  phone: z.string().min(1).max(30),
+  message: z.string().max(1000).optional(),
+  countryMode: z.enum(['IN', 'GLOBAL']).optional(),
+});
+
+const publicTestimonialBodySchema = z.object({
+  authorName: z.string().min(1).max(100),
+  companyName: z.string().max(150).optional(),
+  role: z.string().max(100).optional(),
+  content: z.string().min(1).max(2000),
+  rating: z.number().int().min(1).max(5).optional(),
+  password: z.string().max(200).optional(),
+});
+
+const createTestimonialBodySchema = z.object({
+  authorName: z.string().min(1).max(100),
+  companyName: z.string().max(150).optional(),
+  role: z.string().max(100).optional(),
+  content: z.string().min(1).max(2000),
+  rating: z.number().int().min(1).max(5).optional(),
+  clientWorkspaceId: z.string().uuid().optional(),
+});
+
+const testimonialStatusBodySchema = z.object({
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'ARCHIVED']),
+});
 
 type Claims = { sub: string; organizationId: string };
 export type AuthRequest = Request & {
@@ -231,6 +342,76 @@ apiRouter.get('/reports/share/:token', async (request: Request, response, next) 
         error: { code: error.code, message: error.message },
       });
     }
+    next(error);
+  }
+});
+
+// Public testimonial submission, scoped to a specific viewed report via its
+// share token (proves the submitter actually received/viewed that report —
+// prevents anonymous drive-by submissions against an arbitrary org). Lands
+// in the same PENDING moderation queue as internally-created testimonials.
+apiRouter.post('/public/reports/:token/testimonial', async (request: Request, response, next) => {
+  try {
+    const { authorName, companyName, role, content, rating, password } = publicTestimonialBodySchema.parse(
+      request.body
+    );
+    const token = request.params.token as string;
+    const { organizationId } = await reportService.getShareLinkContext(token, password);
+    const testimonial = await testimonialService.createTestimonial(organizationId, {
+      authorName,
+      companyName,
+      role,
+      content,
+      rating,
+    });
+    response.status(201).json({ success: true, data: { id: testimonial.id, status: testimonial.status } });
+  } catch (error: any) {
+    if (error.code === 'PASSWORD_REQUIRED' || error.code === 'INVALID_PASSWORD') {
+      return response.status(401).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (error.code === 'SHARE_LINK_NOT_FOUND' || error.code === 'SHARE_LINK_EXPIRED' || error.code === 'INVALID_SHARE_TOKEN') {
+      return response.status(404).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    next(error);
+  }
+});
+
+// Real, live-computed platform-wide counts for public social-proof display
+// (landing page) — no invented/placeholder numbers, see platformStatsService.
+apiRouter.get('/public/stats', async (_request: Request, response, next) => {
+  try {
+    const stats = await platformStatsService.getStats();
+    response.json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Public blog (unauthenticated read-only) — creation/editing lives under
+// /admin/blog below, behind requirePlatformAdmin(), which is registered
+// after the global apiRouter.use(requireAuth) further down this file.
+apiRouter.get('/public/blog', async (request: Request, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const result = await blogService.listPublishedPosts({ cursor, limit });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/public/blog/:slug', async (request: Request, response, next) => {
+  try {
+    const post = await blogService.getPublishedPostBySlug(request.params.slug as string);
+    if (!post) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Blog post not found', requestId: requestId(request) },
+      });
+    }
+    response.json({ success: true, data: post });
+  } catch (error) {
     next(error);
   }
 });
@@ -1561,7 +1742,7 @@ apiRouter.get(
         });
       }
 
-      const statusValid = z.enum(['OPEN', 'TRIAGED', 'VERIFIED_IGNORED', 'FIXED']).safeParse(request.query.status);
+      const statusValid = z.enum(['OPEN', 'TRIAGED', 'VERIFIED_IGNORED', 'FIXED', 'VERIFIED']).safeParse(request.query.status);
       const where = statusValid.success
         ? { runId: run.id, status: statusValid.data as never }
         : { runId: run.id };
@@ -1710,6 +1891,41 @@ apiRouter.get(
         });
       }
       response.json({ success: true, data: { evidence: finding.evidence, affectedUrl: finding.affectedUrl } });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// LG-039: cached Hinglish remediation guide for a finding, keyed by its
+// detection key (see packages/shared/src/vault-remediation.ts).
+apiRouter.get(
+  '/websites/:websiteId/security-audit/:runId/findings/:findingId/remediation',
+  requirePermission('SECURITY_AUDIT_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const website = await vaultWebsite(request.params.websiteId, request.auth!.organizationId);
+      if (!website) return vaultRunError(response, 'NOT_FOUND', 'Website not found', request);
+
+      const finding = await db.vaultAuditFinding.findFirst({
+        where: { id: request.params.findingId, runId: request.params.runId, websiteId: website.id },
+        select: { id: true, normalizedIssueKey: true, scannerKey: true },
+      });
+      if (!finding) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Finding not found', requestId: requestId(request) },
+        });
+      }
+
+      const guide = getVaultRemediation(finding.normalizedIssueKey || finding.scannerKey);
+      if (!guide) {
+        return response.status(404).json({
+          success: false,
+          error: { code: 'NO_REMEDIATION_GUIDE', message: 'No remediation guide is available for this finding type', requestId: requestId(request) },
+        });
+      }
+      response.json({ success: true, data: guide });
     } catch (error) {
       next(error);
     }
@@ -1882,6 +2098,34 @@ apiRouter.get('/audits/:id/funnel', requirePermission('AUDIT_VIEW'), async (requ
       });
     }
     response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.get('/audits/:id/auto-fix-scripts', requirePermission('AUDIT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const data = await intelligenceService.getAutoFixScripts(request.params.id, request.auth!.organizationId);
+    if (!data) {
+      return response.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Audit not found', requestId: requestId(request) },
+      });
+    }
+    response.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Link Debugger Sandbox: lets a logged-in user test-build a WhatsApp wa.me
+// link (phone + prefilled message) and see validation issues before
+// publishing it on their site — stateless, no DB writes.
+apiRouter.post('/tools/whatsapp-link-debugger', requireAuth, async (request: AuthRequest, response, next) => {
+  try {
+    const { phone, message, countryMode } = whatsappLinkDebugBodySchema.parse(request.body);
+    const result = buildAndValidateWhatsAppLink(phone, message, countryMode ?? 'IN');
+    response.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
@@ -2401,10 +2645,7 @@ apiRouter.get('/agency/reports/:id/preview', requirePermission('AUDIT_VIEW'), as
 // Create immutable report snapshot from audit
 apiRouter.post('/reports', requirePermission('REPORT_CREATE'), async (request: AuthRequest, response, next) => {
   try {
-    const { auditId, title, clientWorkspaceId, templateVersion } = request.body;
-    if (!auditId) {
-      return response.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: 'auditId is required' } });
-    }
+    const { auditId, title, clientWorkspaceId, templateVersion } = createReportBodySchema.parse(request.body);
     const report = await reportService.createReportSnapshot(request.auth!.organizationId, auditId, {
       title,
       clientWorkspaceId,
@@ -2487,10 +2728,7 @@ apiRouter.get('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: 
 
 apiRouter.post('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const { url, events, description } = request.body;
-    if (!url) {
-      return response.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: 'url is required' } });
-    }
+    const { url, events, description } = createWebhookBodySchema.parse(request.body);
     const result = await webhookService.createEndpoint(request.auth!.organizationId, {
       url,
       events: events || ['*'],
@@ -2536,6 +2774,20 @@ apiRouter.get('/admin/metrics', requirePlatformAdmin(), async (_request: AuthReq
   }
 });
 
+apiRouter.get('/admin/funnel-analytics', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const querySchema = z.object({
+      from: z.coerce.date().optional(),
+      to: z.coerce.date().optional(),
+    });
+    const { from, to } = querySchema.parse(request.query);
+    const analytics = await adminService.getFunnelAnalytics({ from, to });
+    response.json({ success: true, data: analytics });
+  } catch (error) {
+    next(error);
+  }
+});
+
 apiRouter.get('/admin/users', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
@@ -2550,9 +2802,9 @@ apiRouter.get('/admin/users', requirePlatformAdmin(), async (request: AuthReques
 
 apiRouter.patch('/admin/users/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
-    const { disabled, reason } = request.body;
+    const { disabled, reason } = adminUserStatusBodySchema.parse(request.body);
     const ip = getClientIp(request);
-    const user = await adminService.setUserDisabled(request.auth!.sub, request.params.id, Boolean(disabled), reason, ip);
+    const user = await adminService.setUserDisabled(request.auth!.sub, request.params.id, disabled, reason, ip);
     response.json({ success: true, data: { id: user.id, isDisabled: user.isDisabled } });
   } catch (error) {
     next(error);
@@ -2583,9 +2835,9 @@ apiRouter.get('/admin/organizations', requirePlatformAdmin(), async (request: Au
 
 apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
-    const { suspended, reason } = request.body;
+    const { suspended, reason } = adminOrgStatusBodySchema.parse(request.body);
     const ip = getClientIp(request);
-    const org = await adminService.setOrganizationSuspended(request.auth!.sub, request.params.id, Boolean(suspended), reason, ip);
+    const org = await adminService.setOrganizationSuspended(request.auth!.sub, request.params.id, suspended, reason, ip);
     response.json({ success: true, data: { id: org.id, isSuspended: org.isSuspended } });
   } catch (error) {
     next(error);
@@ -2627,7 +2879,7 @@ apiRouter.get('/admin/express-fix/stats', requirePlatformAdmin(), async (_reques
 
 apiRouter.patch('/admin/express-fix/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
-    const { status, notes } = request.body;
+    const { status, notes } = adminExpressFixStatusBodySchema.parse(request.body);
     const ip = getClientIp(request);
     const updated = await adminService.transitionExpressFixStatus(
       request.auth!.sub,
@@ -2641,6 +2893,64 @@ apiRouter.patch('/admin/express-fix/:id/status', requirePlatformAdmin(), async (
     if (error.code === 'NOT_FOUND') {
       return response.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: error.message } });
     }
+    next(error);
+  }
+});
+
+// ==========================================
+// BLOG / CONTENT HUB (Admin-authored, publicly readable once PUBLISHED)
+// ==========================================
+
+apiRouter.get('/admin/blog', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const cursor = request.query.cursor as string | undefined;
+    const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const status = request.query.status as string | undefined;
+    const result = await blogService.listPostsAdmin({ cursor, limit, status });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post('/admin/blog', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const body = createBlogPostBodySchema.parse(request.body);
+    const post = await blogService.createPost(request.auth!.sub, body);
+    response.status(201).json({ success: true, data: post });
+  } catch (error: any) {
+    if (error.code === 'SLUG_TAKEN' || error.code === 'INVALID_SLUG') {
+      return response.status(400).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    next(error);
+  }
+});
+
+apiRouter.patch('/admin/blog/:id', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const body = updateBlogPostBodySchema.parse(request.body);
+    const post = await blogService.updatePost(request.auth!.sub, request.params.id, body);
+    response.json({ success: true, data: post });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.patch('/admin/blog/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const { status } = blogPostStatusBodySchema.parse(request.body);
+    const post = await blogService.setStatus(request.auth!.sub, request.params.id, status);
+    response.json({ success: true, data: post });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.delete('/admin/blog/:id', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    await blogService.deletePost(request.auth!.sub, request.params.id);
+    response.json({ success: true, message: 'Blog post deleted' });
+  } catch (error) {
     next(error);
   }
 });
@@ -2660,7 +2970,7 @@ apiRouter.get('/settings/profile', requirePermission('SETTINGS_MANAGE'), async (
 
 apiRouter.patch('/settings/profile', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const { name, timezone, locale } = request.body;
+    const { name, timezone, locale } = settingsProfileBodySchema.parse(request.body);
     const profile = await settingsService.updateProfile(request.auth!.sub, { name, timezone, locale });
     response.json({ success: true, data: profile });
   } catch (error) {
@@ -2679,7 +2989,7 @@ apiRouter.get('/settings/notifications', requirePermission('SETTINGS_MANAGE'), a
 
 apiRouter.patch('/settings/notifications', requirePermission('SETTINGS_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const { eventTypes, enabled } = request.body;
+    const { eventTypes, enabled } = settingsNotificationsBodySchema.parse(request.body);
     const prefs = await settingsService.updateNotificationPreferences(request.auth!.sub, request.auth!.organizationId, {
       eventTypes,
       enabled,
@@ -2724,7 +3034,9 @@ apiRouter.get('/testimonials', requirePermission('TESTIMONIAL_MANAGE'), async (r
 
 apiRouter.post('/testimonials', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const { authorName, companyName, role, content, rating, clientWorkspaceId } = request.body;
+    const { authorName, companyName, role, content, rating, clientWorkspaceId } = createTestimonialBodySchema.parse(
+      request.body
+    );
     const testimonial = await testimonialService.createTestimonial(request.auth!.organizationId, {
       authorName,
       companyName,
@@ -2741,7 +3053,7 @@ apiRouter.post('/testimonials', requirePermission('TESTIMONIAL_MANAGE'), async (
 
 apiRouter.patch('/testimonials/:id/status', requirePermission('TESTIMONIAL_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
-    const { status } = request.body;
+    const { status } = testimonialStatusBodySchema.parse(request.body);
     const testimonial = await testimonialService.updateTestimonialStatus(request.auth!.organizationId, request.params.id, status);
     response.json({ success: true, data: testimonial });
   } catch (error) {

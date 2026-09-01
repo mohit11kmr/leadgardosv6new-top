@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { db } from '@leadguard/database';
 import {
   emitVaultCompleted,
@@ -22,6 +24,7 @@ describe('VaultGuard: security.audit.completed webhook emission (LG-021/LG-022)'
         findingsCount: 3,
         retestedFindings: 3,
         fixedFindings: 1,
+        verifiedFindings: 0,
         pagesDiscovered: 10,
         pagesFetched: 8,
         pagesFailed: 1,
@@ -42,5 +45,29 @@ describe('VaultGuard: security.audit.completed webhook emission (LG-021/LG-022)'
     expect(payload.event).toBe('security.audit.completed');
     expect(payload.score).toBe(88);
     expect(payload.runId).toBe('run-123');
+  });
+});
+
+// Regression for the audit finding: the VaultAuditRun status update and the
+// OutboxEvent creation used to be two separate, non-transactional writes, so
+// a worker crash between them left a COMPLETED run with no outbox row and
+// thus no webhook — ever, silently, despite the outbox pattern's entire
+// purpose being guaranteed eventual delivery. True crash-mid-transaction
+// isn't practical to simulate in an integration test, so this statically
+// verifies vaultScan.ts wraps both writes in a single db.$transaction (same
+// source-inspection pattern used by architecture.test.ts).
+describe('VaultGuard scan: outbox write is atomic with the run status update', () => {
+  it('creates the outbox event inside the same db.$transaction as the VaultAuditRun update', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'apps/worker/src/audit/vaultScan.ts'),
+      'utf-8'
+    );
+
+    const transactionIndex = source.indexOf('db.$transaction(async (tx)');
+    expect(transactionIndex).toBeGreaterThan(-1);
+
+    const transactionBody = source.slice(transactionIndex, source.indexOf('\n    });', transactionIndex));
+    expect(transactionBody).toMatch(/tx\.vaultAuditRun\.update\(/);
+    expect(transactionBody).toMatch(/createVaultCompletedOutboxEvent\(tx,/);
   });
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
-import { api } from '../../api.js';
+import { apiClient as api } from '../../api/client.js';
 
 export function ReportDetailView() {
   const { id } = useParams<{ id: string }>();
