@@ -4,7 +4,8 @@ import { config } from '@leadguard/config';
 import { db } from '@leadguard/database';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { validateExternalUrl } from '@leadguard/shared';
+import { resolveAndValidateExternalUrl } from '@leadguard/shared';
+import { fetchPinned } from '@leadguard/shared/dist/server-only/pinned-fetch.js';
 import { chromium } from 'playwright-core';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
@@ -131,17 +132,18 @@ function sanitizeCssColor(color: string, fallback: string): string {
  */
 export async function validateAndCheckSafeLogo(logoUrl: string): Promise<string | null> {
   try {
-    const parsed = await validateExternalUrl(logoUrl);
+    const target = await resolveAndValidateExternalUrl(logoUrl);
 
     // If local test fixtures enabled, return parsed URL directly
     if (process.env.ALLOW_LOCAL_FIXTURES === 'true') {
-      return parsed.toString();
+      return target.url.toString();
     }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
 
-    const res = await fetch(parsed.toString(), {
+    // SEC-1: pinned to the address just validated, not re-resolved at connect time.
+    const res = await fetchPinned(target, {
       method: 'GET',
       signal: controller.signal,
       headers: { 'User-Agent': 'LeadGuard-PDF/6.0' },
@@ -156,7 +158,7 @@ export async function validateAndCheckSafeLogo(logoUrl: string): Promise<string 
     const contentLength = Number(res.headers.get('content-length') || 0);
     if (contentLength > 1_048_576) return null; // 1 MB limit
 
-    return parsed.toString();
+    return target.url.toString();
   } catch {
     return null;
   }

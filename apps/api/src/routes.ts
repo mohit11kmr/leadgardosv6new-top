@@ -86,6 +86,10 @@ const adminOrgStatusBodySchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+const adminBillingReconciliationBodySchema = z.object({
+  organizationId: z.string().uuid().optional(),
+});
+
 const adminExpressFixStatusBodySchema = z.object({
   status: z.enum([
     'PAYMENT_PENDING',
@@ -2839,6 +2843,21 @@ apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), async
     const ip = getClientIp(request);
     const org = await adminService.setOrganizationSuspended(request.auth!.sub, request.params.id, suspended, reason, ip);
     response.json({ success: true, data: { id: org.id, isSuspended: org.isSuspended } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// BE-1/AR-1: on-demand billing reconciliation (Phase 2A). Platform-admin
+// only — never exposed to normal tenant users. Detection-only: reports
+// drift between local billing records and expected provider state, does
+// not correct it automatically (see adminService.runBillingReconciliation).
+apiRouter.post('/admin/billing/reconciliation', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+  try {
+    const { organizationId } = adminBillingReconciliationBodySchema.parse(request.body ?? {});
+    const ip = getClientIp(request);
+    const result = await adminService.runBillingReconciliation(request.auth!.sub, organizationId, ip);
+    response.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

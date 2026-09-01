@@ -53,6 +53,14 @@ If a check could not be run, say **"NOT RUN — reason: ..."**. Never say "verif
 
 **Forbidden without explicit authorization:** deleting major functionality, resetting/dropping database objects, modifying production data, rotating/changing secrets or credentials, `git push --force`, `git reset --hard`, `git clean`, any destructive infra command.
 
+## External tooling
+
+- Use current official documentation (WebSearch/WebFetch, or Context7 once authenticated) when library behavior may have changed.
+- Use GitHub tooling (the `github` MCP server) for repository/PR/CI inspection when available.
+- Use Playwright Test (`tests/e2e/`) for deterministic E2E tests.
+- Use Playwright CLI/Skills for token-efficient browser exploration when available; fall back to the native `claude-in-chrome` tools otherwise.
+- Do not use multiple overlapping tools for the same capability. Full detail: `docs/CLAUDE_ENGINEERING.md`.
+
 ## Where to look first
 
 - Skills for task-specific rules: `.claude/skills/*/SKILL.md` (engineering discipline) and `.agents/skills/leadguard-*/SKILL.md` (product/UI conventions — read both, they're not duplicates).

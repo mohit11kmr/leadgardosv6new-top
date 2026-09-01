@@ -25,6 +25,10 @@ export class BillingReconciliationService {
         status: { in: ['ACTIVE', 'TRIALING', 'PAST_DUE'] },
         providerSubscriptionId: { not: null },
       },
+      // Bounded: an operator-triggered check, not a data export — caps a
+      // single run the same way reconcilePayments already caps at 100.
+      take: 500,
+      orderBy: { updatedAt: 'desc' },
     });
 
     const discrepancies: ReconciliationDiscrepancy[] = [];

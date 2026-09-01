@@ -3,8 +3,9 @@ import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { db } from '@leadguard/database';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { validateExternalUrl } from '@leadguard/shared';
+import { resolveAndValidateExternalUrl } from '@leadguard/shared';
 import { decryptSecret } from '@leadguard/shared/dist/server-only/secret-encryption.js';
+import { fetchPinned } from '@leadguard/shared/dist/server-only/pinned-fetch.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -78,9 +79,15 @@ export async function processWebhookDelivery(job: Job<WebhookJobData>) {
     let finalRes: Response | null = null;
 
     while (redirectHops <= maxRedirects) {
-      // SSRF Validation: destination URL must be validated before every request
+      // SSRF Validation: destination URL must be validated before every
+      // request. SEC-1: resolveAndValidateExternalUrl also returns the
+      // validated address, which fetchPinned below pins the connection to
+      // — plain fetch(currentUrl) would re-resolve the hostname itself at
+      // connect time, a second independent DNS lookup a DNS-rebinding
+      // attacker can answer with a private/metadata address.
+      let target: Awaited<ReturnType<typeof resolveAndValidateExternalUrl>>;
       try {
-        await validateExternalUrl(currentUrl);
+        target = await resolveAndValidateExternalUrl(currentUrl);
       } catch (err: any) {
         errorMsg = `SSRF_BLOCKED: ${err.message}`;
         await db.webhookDelivery.upsert({
@@ -106,7 +113,7 @@ export async function processWebhookDelivery(job: Job<WebhookJobData>) {
         return { success: false, error: errorMsg };
       }
 
-      const res = await fetch(currentUrl, {
+      const res = await fetchPinned(target, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -118,7 +125,6 @@ export async function processWebhookDelivery(job: Job<WebhookJobData>) {
         },
         body: rawBody,
         signal: controller.signal,
-        redirect: 'manual',
       });
 
       if ([301, 302, 303, 307, 308].includes(res.status)) {

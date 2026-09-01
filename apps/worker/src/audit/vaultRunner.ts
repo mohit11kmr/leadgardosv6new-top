@@ -2,7 +2,7 @@ import { db } from '@leadguard/database';
 import {
   collectVaultFindings,
   inspectTls,
-  validateExternalUrl,
+  resolveAndValidateExternalUrl,
   type ExposedAssetFacts,
   type LoginFormFacts,
   type PageRecord,
@@ -11,6 +11,7 @@ import {
   type VaultFinding,
   type VaultProbeFacts,
 } from '@leadguard/shared';
+import { fetchPinned } from '@leadguard/shared/dist/server-only/pinned-fetch.js';
 
 const DEBUG_PROBE_PATHS = [
   '/.env',
@@ -157,10 +158,10 @@ interface ProbeHit {
 async function probePath(base: string, path: string, signal: AbortSignal): Promise<ProbeHit | undefined> {
   const url = `${base}${path}`;
   try {
-    const validUrl = await validateExternalUrl(url);
-    const response = await fetch(validUrl, {
+    // SEC-1: pinned to the address validated here, not re-resolved at connect time.
+    const target = await resolveAndValidateExternalUrl(url);
+    const response = await fetchPinned(target, {
       signal,
-      redirect: 'manual',
       headers: {
         'user-agent': 'LeadGuardBot/2.0 (+https://leadguard.local)',
         accept: 'text/html,application/xhtml+xml,application/json,text/plain',

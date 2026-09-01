@@ -1,4 +1,5 @@
 import { db } from '@leadguard/database';
+import { billingReconciliationService } from './billingReconciliationService.js';
 
 export class AdminService {
   /**
@@ -477,6 +478,43 @@ export class AdminService {
       paymentFailedCount: countByType.get('PAYMENT_FAILED') ?? 0,
       fulfillmentCreatedCount: countByType.get('FULFILLMENT_CREATED') ?? 0,
     };
+  }
+
+  /**
+   * BE-1/AR-1: wires the previously-dead billingReconciliationService to a
+   * platform-admin-only trigger. Detection-only — reconcileSubscriptions/
+   * reconcilePayments never call a live Razorpay API and never write to
+   * Subscription/Payment (see billingReconciliationService.ts), so a run
+   * has no side effect beyond this audit-log entry: re-running it (even
+   * concurrently) is naturally idempotent, and there is nothing here that
+   * could double-refund, double-cancel, or otherwise corrupt billing state.
+   * Errors are intentionally left to propagate to the route's `next(error)`,
+   * matching every other adminService method — an admin-triggered check
+   * failing loudly is correct; silently swallowing it would hide drift.
+   */
+  async runBillingReconciliation(adminUserId: string, organizationId?: string, ipAddress?: string) {
+    const [subscriptions, payments] = await Promise.all([
+      billingReconciliationService.reconcileSubscriptions(organizationId),
+      billingReconciliationService.reconcilePayments(organizationId),
+    ]);
+
+    const result = {
+      organizationId: organizationId ?? null,
+      subscriptions,
+      payments,
+      totalDiscrepancies: subscriptions.discrepancies.length + payments.discrepancies.length,
+    };
+
+    await this.recordAdminAction(
+      adminUserId,
+      'BILLING_RECONCILIATION_RUN',
+      'BILLING',
+      organizationId ?? null,
+      result,
+      ipAddress
+    );
+
+    return result;
   }
 }
 

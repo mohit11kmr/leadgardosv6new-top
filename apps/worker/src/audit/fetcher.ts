@@ -1,4 +1,5 @@
-import { normalizeUrl, validateExternalUrl, type PageRecord } from '@leadguard/shared';
+import { normalizeUrl, resolveAndValidateExternalUrl, type PageRecord } from '@leadguard/shared';
+import { fetchPinned } from '@leadguard/shared/dist/server-only/pinned-fetch.js';
 
 export const DEFAULT_MAX_RESPONSE_BYTES = 2_000_000; // 2MB bound
 
@@ -53,15 +54,17 @@ export async function fetchPage(
 ): Promise<PageRecord> {
   const started = Date.now();
   const normalizedRawUrl = normalizeUrl(rawUrl);
-  let current = await validateExternalUrl(normalizedRawUrl);
+  let target = await resolveAndValidateExternalUrl(normalizedRawUrl);
+  let current = target.url;
   const redirectChain: string[] = [];
 
   for (let redirect = 0; redirect <= 3; redirect += 1) {
     let response: Response;
     try {
-      response = await fetch(current, {
+      // SEC-1: pinned to the address `target` was just validated against —
+      // never a fresh, independently-resolved connection to `current`.
+      response = await fetchPinned(target, {
         signal,
-        redirect: 'manual',
         headers: {
           'user-agent': 'LeadGuardBot/2.0 (+https://leadguard.local)',
           accept: 'text/html,application/xhtml+xml',
@@ -92,12 +95,13 @@ export async function fetchPage(
       const location = response.headers.get('location');
       if (!location || redirect === 3) throw new Error('REDIRECT_ERROR');
 
-      const destination = await validateExternalUrl(new URL(location, current).toString());
-      if (current.protocol === 'https:' && destination.protocol !== 'https:') {
+      const destinationTarget = await resolveAndValidateExternalUrl(new URL(location, current).toString());
+      if (current.protocol === 'https:' && destinationTarget.url.protocol !== 'https:') {
         throw new Error('REDIRECT_ERROR: HTTPS downgrade prohibited');
       }
-      redirectChain.push(destination.toString());
-      current = destination;
+      redirectChain.push(destinationTarget.url.toString());
+      target = destinationTarget;
+      current = destinationTarget.url;
       continue;
     }
 
