@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: Run Prisma Generate
-        run: npm run generate --workspace @leadguard/database
+        run: npm run db:generate --workspace @leadguard/database
         env:
           DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
 
@@ -77,3 +77,75 @@ jobs:
 
       - name: Build All Workspaces
         run: npm run build --workspaces
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: validate
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: leadguard
+          POSTGRES_PASSWORD: leadguard
+          POSTGRES_DB: leadguard
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 16380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Prisma Generate
+        run: npm run db:generate --workspace @leadguard/database
+        env:
+          DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
+
+      # playwright.config.ts's webServer entries boot the api/web dev servers
+      # themselves with their own MOCK-mode env — this step only needs to get
+      # the schema into the ephemeral Postgres before those servers start.
+      - name: Push Database Schema
+        run: npx prisma db push --skip-generate
+        working-directory: packages/database
+        env:
+          DATABASE_URL: "postgresql://leadguard:leadguard@localhost:15432/leadguard"
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E Tests
+        run: npm run e2e
+
+      - name: Upload Playwright Report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

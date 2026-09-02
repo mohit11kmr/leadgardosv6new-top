@@ -1,8 +1,14 @@
-export function toUserDto(user: { id: string; email: string; emailVerifiedAt?: Date | null }) {
+export function toUserDto(user: {
+  id: string;
+  email: string;
+  emailVerifiedAt?: Date | null;
+  platformAdmin?: boolean;
+}) {
   return {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.emailVerifiedAt),
+    platformAdmin: Boolean(user.platformAdmin),
   };
 }
 

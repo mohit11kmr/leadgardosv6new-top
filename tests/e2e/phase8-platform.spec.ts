@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { db } from '@leadguard/database';
 
 test('phase 8 platform flow: reports, developer api portal, webhooks, admin, and settings', async ({ page }) => {
   test.setTimeout(60000);
@@ -30,27 +31,35 @@ test('phase 8 platform flow: reports, developer api portal, webhooks, admin, and
   await page.goto('/developer/webhooks');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Webhooks & Event Streams/i);
 
-  // 7. Navigate to Admin Dashboard
+  // 7. Admin is a company-internal surface, not a customer feature — a
+  // freshly registered org owner must be redirected away, not shown it.
+  await page.goto('/admin');
+  await expect(page).toHaveURL(/dashboard/);
+
+  // 8. Only once the account is actually promoted to platform admin does the
+  // gate open. A page reload is required so the client re-fetches /auth/me.
+  await db.user.update({ where: { email }, data: { platformAdmin: true } });
+  await page.reload();
   await page.goto('/admin');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/System Administration/i);
 
-  // 8. Navigate to Admin Users View
+  // 9. Navigate to Admin Users View
   await page.goto('/admin/users');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/User Accounts Management/i);
 
-  // 9. Navigate to Settings & Profile View
+  // 10. Navigate to Settings & Profile View
   await page.goto('/settings');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Account & Profile Settings/i);
 
-  // 10. Navigate to Notification Settings View
+  // 11. Navigate to Notification Settings View
   await page.goto('/settings/notifications');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Notification Preferences/i);
 
-  // 11. Navigate to Active Sessions & Security
+  // 12. Navigate to Active Sessions & Security
   await page.goto('/settings/security');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Active Sessions & Account Security/i);
 
-  // 12. Navigate to Testimonials Wall
+  // 13. Navigate to Testimonials Wall
   await page.goto('/testimonials');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/Customer Testimonials Wall/i);
 });

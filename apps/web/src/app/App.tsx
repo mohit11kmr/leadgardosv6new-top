@@ -55,6 +55,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <Shell>{children}</Shell>;
 }
 
+// The customer/agency RBAC in apps/api/src/middleware/rbac.ts is enforced
+// server-side regardless of this check — this exists so a non-admin never
+// even sees the admin shell render, not as the security boundary itself.
+function RequirePlatformAdmin({ children }: { children: React.ReactNode }) {
+  const { authenticated, platformAdmin, isPlatformAdminKnown } = useAuth();
+  if (!authenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  if (!isPlatformAdminKnown) {
+    // Briefly true on first paint while GET /auth/me resolves — render
+    // nothing rather than redirecting an actual admin away prematurely.
+    return null;
+  }
+  if (!platformAdmin) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <Shell>{children}</Shell>;
+}
+
 export function App() {
   const { authenticated } = useAuth();
 
@@ -265,33 +284,33 @@ export function App() {
         <Route
           path="/admin"
           element={
-            <ProtectedRoute>
+            <RequirePlatformAdmin>
               <AdminDashboardView />
-            </ProtectedRoute>
+            </RequirePlatformAdmin>
           }
         />
         <Route
           path="/admin/users"
           element={
-            <ProtectedRoute>
+            <RequirePlatformAdmin>
               <AdminUsersView />
-            </ProtectedRoute>
+            </RequirePlatformAdmin>
           }
         />
         <Route
           path="/admin/organizations"
           element={
-            <ProtectedRoute>
+            <RequirePlatformAdmin>
               <AdminOrgsView />
-            </ProtectedRoute>
+            </RequirePlatformAdmin>
           }
         />
         <Route
           path="/admin/audit"
           element={
-            <ProtectedRoute>
+            <RequirePlatformAdmin>
               <AdminAuditLogsView />
-            </ProtectedRoute>
+            </RequirePlatformAdmin>
           }
         />
         <Route

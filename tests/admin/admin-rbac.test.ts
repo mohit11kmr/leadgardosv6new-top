@@ -100,6 +100,29 @@ describe('Admin Platform & RBAC Security Controls (LG-034)', () => {
     expect(suspendRes.body.data.isSuspended).toBe(true);
   });
 
+  it('exposes platformAdmin on GET /auth/me only for actual platform admins, and requires auth', async () => {
+    const adminRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${platformToken}`);
+    expect(adminRes.status).toBe(200);
+    expect(adminRes.body.data.user.platformAdmin).toBe(true);
+
+    const ownerRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${ownerToken}`);
+    expect(ownerRes.status).toBe(200);
+    expect(ownerRes.body.data.user.platformAdmin).toBe(false);
+
+    const regularRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${regularToken}`);
+    expect(regularRes.status).toBe(200);
+    expect(regularRes.body.data.user.platformAdmin).toBe(false);
+
+    const anonRes = await request(app).get('/api/v1/auth/me');
+    expect(anonRes.status).toBe(401);
+  });
+
   it('rejects org owner attempting to disable users and suspend organizations', async () => {
     const targetUser = await db.user.create({
       data: { email: `target2-${Date.now()}@example.com`, passwordHash: 'hash' },

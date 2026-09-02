@@ -22,7 +22,7 @@ export interface ShellProps {
 }
 
 export function Shell({ children }: ShellProps) {
-  const { authenticated, logout } = useAuth();
+  const { authenticated, logout, platformAdmin } = useAuth();
   const location = useLocation();
 
   const navLinks = [
@@ -36,7 +36,11 @@ export function Shell({ children }: ShellProps) {
     { label: 'Testimonials', path: '/testimonials', icon: <IconTestimonials size={18} /> },
     { label: 'Billing & Plans', path: '/billing', icon: <IconBilling size={18} /> },
     { label: 'Settings', path: '/settings', icon: <IconSettings size={18} /> },
-    { label: 'Admin Platform', path: '/admin', icon: <IconAdmin size={18} /> },
+    // Admin Platform is a company-internal surface, not a customer feature —
+    // only ever shown to accounts the server confirms are platform admins.
+    ...(platformAdmin
+      ? [{ label: 'Admin Platform', path: '/admin', icon: <IconAdmin size={18} /> }]
+      : []),
   ];
 
   return (

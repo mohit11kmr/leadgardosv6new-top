@@ -700,6 +700,35 @@ apiRouter.post('/auth/email-verification/confirm', emailVerificationLimiter, asy
   }
 });
 
+// Current user profile (Authenticated) — the client's only source of truth for
+// privilege flags like platformAdmin; the JWT itself carries no such claim, so
+// this is a live DB read on every call, same as requirePlatformAdmin().
+apiRouter.get('/auth/me', requireAuth, async (request: AuthRequest, response, next) => {
+  try {
+    const user = await db.user.findUnique({ where: { id: request.auth!.sub } });
+    if (!user) {
+      return response.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHENTICATED', message: 'Account no longer exists', requestId: requestId(request) },
+      });
+    }
+
+    const organization = await db.organization.findUnique({
+      where: { id: request.auth!.organizationId },
+    });
+
+    response.json({
+      success: true,
+      data: {
+        user: toUserDto(user),
+        organization: organization ? toOrganizationDto(organization) : null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Session Management (Authenticated)
 apiRouter.get('/auth/sessions', requireAuth, async (request: AuthRequest, response, next) => {
   try {

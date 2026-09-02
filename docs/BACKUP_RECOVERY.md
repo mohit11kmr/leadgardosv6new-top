@@ -1,6 +1,8 @@
 # LeadGuard OS V6 — Backup & Disaster Recovery Architecture
 
-This document establishes the operational procedures for database backups, Point-In-Time Recovery (PITR), data retention schedules, and disaster recovery execution for LeadGuard OS V6.
+> **Status: FUTURE / TARGET ARCHITECTURE — not yet implemented.** Verified against source as of Phase 2 (2026-09-02): no WAL archiving, off-site storage, warm replica, or managed-failover infrastructure exists anywhere in this repository, and none of the `docker`/container names below are defined in `docker-compose.yml`. For what actually exists today, see `docs/DATABASE_BACKUP_RUNBOOK.md` and `docs/DATABASE_RESTORE_RUNBOOK.md`. This document remains useful as the target design once a managed Postgres provider is chosen — read it as a plan, not a runbook.
+
+This document establishes the *target* operational procedures for database backups, Point-In-Time Recovery (PITR), data retention schedules, and disaster recovery execution for LeadGuard OS V6.
 
 ---
 

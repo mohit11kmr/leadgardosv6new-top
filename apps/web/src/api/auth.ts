@@ -10,9 +10,21 @@ export interface UserSession {
 }
 
 export interface AuthResult {
-  user?: { id: string; email: string };
+  user?: { id: string; email: string; platformAdmin?: boolean };
   organization?: { id: string; name: string };
   accessToken: string;
+}
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  emailVerified: boolean;
+  platformAdmin: boolean;
+}
+
+export interface MeResult {
+  user: CurrentUser;
+  organization: { id: string; name: string; slug: string } | null;
 }
 
 export function persistAccessToken(token: string) {
@@ -75,6 +87,10 @@ export async function logoutAll(): Promise<void> {
   } finally {
     clearAccessToken();
   }
+}
+
+export async function getMe(): Promise<MeResult> {
+  return apiClient<MeResult>('/auth/me');
 }
 
 export async function getSessions(): Promise<UserSession[]> {
