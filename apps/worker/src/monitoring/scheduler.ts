@@ -45,8 +45,16 @@ export class MonitoringScheduler {
     try {
       const result = await redisConnection.eval(RELEASE_LOCK_LUA, 1, lockKey, lockToken);
       return result === 1;
-    } catch (err) {
-      console.error(`[Scheduler] Failed to release Redis lock for key ${lockKey}:`, err);
+    } catch (err: any) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'worker',
+          event: 'scheduler_lock_release_failed',
+          lockKey,
+          error: err?.message ?? String(err),
+        })
+      );
       return false;
     }
   }
@@ -93,10 +101,18 @@ export class MonitoringScheduler {
       }
 
       return { claimed: true, lockToken, lockKey };
-    } catch (err) {
+    } catch (err: any) {
       // DB error -> Safe rollback of Redis lock
       await this.releaseRedisLock(lockKey, lockToken);
-      console.error(`[Scheduler] Error during DB claim for config ${configId}:`, err);
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'worker',
+          event: 'scheduler_claim_failed',
+          monitoringConfigId: configId,
+          error: err?.message ?? String(err),
+        })
+      );
       return { claimed: false };
     }
   }
@@ -140,17 +156,58 @@ export class MonitoringScheduler {
           { jobId }
         );
         enqueued++;
-      } catch (queueErr) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            service: 'worker',
+            event: 'scheduler_job_triggered',
+            monitoringConfigId: item.id,
+            slot,
+          })
+        );
+      } catch (queueErr: any) {
         // Queue enqueue failure recovery:
         // Reset DB claim & release Redis lock so next scheduler cycle can recover
-        console.error(`[Scheduler] Failed to enqueue job for monitor ${item.id}:`, queueErr);
-        await db.monitoringConfig.update({
-          where: { id: item.id },
-          data: { lockedUntil: null, lockToken: null },
-        }).catch((e) => console.error(`[Scheduler] DB claim reset error for ${item.id}:`, e));
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'worker',
+            event: 'scheduler_job_failed',
+            monitoringConfigId: item.id,
+            slot,
+            error: queueErr?.message ?? String(queueErr),
+          })
+        );
+        await db.monitoringConfig
+          .update({ where: { id: item.id }, data: { lockedUntil: null, lockToken: null } })
+          .catch((e: any) =>
+            console.error(
+              JSON.stringify({
+                level: 'error',
+                service: 'worker',
+                event: 'scheduler_claim_reset_failed',
+                monitoringConfigId: item.id,
+                error: e?.message ?? String(e),
+              })
+            )
+          );
 
         await this.releaseRedisLock(claimResult.lockKey, claimResult.lockToken);
       }
+    }
+
+    if (dueConfigs.length > 0) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          service: 'worker',
+          event: 'scheduler_cycle_completed',
+          slot,
+          dueCount: dueConfigs.length,
+          enqueued,
+          skipped: dueConfigs.length - enqueued,
+        })
+      );
     }
 
     return enqueued;
@@ -158,9 +215,19 @@ export class MonitoringScheduler {
 
   start(intervalMs = 30_000) {
     if (this.timer) return;
+    console.log(
+      JSON.stringify({ level: 'info', service: 'worker', event: 'scheduler_initialized', intervalMs })
+    );
     this.timer = setInterval(() => {
-      this.enqueueDueMonitors().catch((err) =>
-        console.error('Scheduler error:', err)
+      this.enqueueDueMonitors().catch((err: any) =>
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'worker',
+            event: 'scheduler_cycle_failed',
+            error: err?.message ?? String(err),
+          })
+        )
       );
     }, intervalMs);
   }

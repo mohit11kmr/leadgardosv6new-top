@@ -3,6 +3,7 @@ import { db } from '@leadguard/database';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
+import { getStorageProvider, extractStorageFilename } from '@leadguard/shared/dist/server-only/report-storage.js';
 import { whiteLabelService } from './agency/whiteLabelService.js';
 import { outboxService } from './outboxService.js';
 
@@ -691,6 +692,55 @@ export class ReportService {
       jobId: job.id,
       status: 'QUEUED',
     };
+  }
+
+  /**
+   * Reads back the generated PDF bytes for an authenticated, org-scoped
+   * download. Distinct error codes let the route map each failure mode to
+   * the right HTTP status (404 vs 409-for-not-ready) rather than a generic
+   * 500 that hides what actually went wrong.
+   */
+  async getReportPdfBytes(organizationId: string, reportId: string): Promise<{ buffer: Buffer; filename: string }> {
+    const report = await db.report.findFirst({
+      where: { id: reportId, organizationId },
+      select: { id: true, pdfPath: true, pdfStatus: true },
+    });
+
+    if (!report) {
+      const err = new Error('Report not found');
+      (err as unknown as { code: string }).code = 'REPORT_NOT_FOUND';
+      throw err;
+    }
+
+    if (report.pdfStatus !== 'READY' || !report.pdfPath) {
+      const err = new Error(`PDF is not ready (status=${report.pdfStatus})`);
+      (err as unknown as { code: string }).code = 'PDF_NOT_READY';
+      throw err;
+    }
+
+    const filename = extractStorageFilename(report.pdfPath);
+    const storage = getStorageProvider();
+
+    try {
+      const buffer = await storage.get(filename);
+      return { buffer, filename };
+    } catch (storageErr) {
+      const err = new Error('Stored PDF could not be read');
+      (err as unknown as { code: string }).code = 'PDF_STORAGE_READ_FAILED';
+      (err as unknown as { cause?: unknown }).cause = storageErr;
+      throw err;
+    }
+  }
+
+  /**
+   * Same as getReportPdfBytes, but resolved through a public share token
+   * (password/expiry/revocation all enforced by resolveShareLink) instead of
+   * an authenticated org membership — used by the public share-link download
+   * route.
+   */
+  async getPublicReportPdfBytes(token: string, password?: string): Promise<{ buffer: Buffer; filename: string }> {
+    const link = await this.resolveShareLink(token, password);
+    return this.getReportPdfBytes(link.report.organizationId, link.reportId);
   }
 }
 

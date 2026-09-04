@@ -33,9 +33,19 @@ import { competitorService } from './services/agency/competitorService.js';
 import { agencyOverviewService } from './services/agency/agencyOverviewService.js';
 import { whiteLabelService } from './services/agency/whiteLabelService.js';
 import { toOrganizationDto, toUserDto, toWebsiteDto } from './dtos/index.js';
-import { requirePermission, requirePlatformAdmin } from './middleware/rbac.js';
+import { requirePermission, requirePlatformAdmin, requirePlatformCapability, requireOperationsCapability } from './middleware/rbac.js';
 import { reportService } from './services/reportService.js';
 import { adminService } from './services/adminService.js';
+import { revenueIntelligenceService, resolvePeriod } from './services/billing/revenueIntelligenceService.js';
+import { refundService, RefundValidationError } from './services/billing/refundService.js';
+import { getOrganizationDetail } from './services/adminCustomer360Service.js';
+import { buildQueueBoardRouter, auditBullBoardMutations } from './admin/queueBoard.js';
+import { monitoringQueue } from './queue.js';
+import { reportQueue } from './services/reportService.js';
+import { webhookQueue } from './services/outboxService.js';
+import { competitorQueue } from './services/agency/competitorService.js';
+import { prospectQueue } from './services/agency/prospectService.js';
+import { pitchQueue } from './services/agency/pitchService.js';
 import { settingsService } from './services/settingsService.js';
 import { testimonialService } from './services/testimonialService.js';
 import { webhookService } from './services/webhookService.js';
@@ -345,6 +355,40 @@ apiRouter.get('/reports/share/:token', async (request: Request, response, next) 
         success: false,
         error: { code: error.code, message: error.message },
       });
+    }
+    next(error);
+  }
+});
+
+// Public PDF download via share token — same password/expiry/revocation
+// checks as the JSON share view above, resolved through the same
+// resolveShareLink path so the two can never drift out of sync.
+apiRouter.get('/reports/share/:token/pdf', async (request: Request, response, next) => {
+  try {
+    const password = request.query.password as string | undefined;
+    const token = request.params.token as string;
+    const { buffer, filename } = await reportService.getPublicReportPdfBytes(token, password);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    response.setHeader('Content-Length', String(buffer.length));
+    response.send(buffer);
+  } catch (error: any) {
+    if (error.code === 'PASSWORD_REQUIRED' || error.code === 'INVALID_PASSWORD') {
+      return response.status(401).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (
+      error.code === 'SHARE_LINK_NOT_FOUND' ||
+      error.code === 'SHARE_LINK_EXPIRED' ||
+      error.code === 'INVALID_SHARE_TOKEN' ||
+      error.code === 'REPORT_NOT_FOUND'
+    ) {
+      return response.status(404).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (error.code === 'PDF_NOT_READY') {
+      return response.status(409).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (error.code === 'RATE_LIMIT_EXCEEDED') {
+      return response.status(429).json({ success: false, error: { code: error.code, message: error.message } });
     }
     next(error);
   }
@@ -2746,6 +2790,25 @@ apiRouter.post('/reports/:id/pdf', requirePermission('REPORT_MANAGE'), async (re
   }
 });
 
+// Download the generated PDF (authenticated, org-scoped)
+apiRouter.get('/reports/:id/pdf', requirePermission('REPORT_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const { buffer, filename } = await reportService.getReportPdfBytes(request.auth!.organizationId, request.params.id);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    response.setHeader('Content-Length', String(buffer.length));
+    response.send(buffer);
+  } catch (error: any) {
+    if (error.code === 'REPORT_NOT_FOUND') {
+      return response.status(404).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    if (error.code === 'PDF_NOT_READY') {
+      return response.status(409).json({ success: false, error: { code: error.code, message: error.message } });
+    }
+    next(error);
+  }
+});
+
 // ==========================================
 // PHASE 8: WEBHOOKS MANAGEMENT
 // ==========================================
@@ -2866,6 +2929,38 @@ apiRouter.get('/admin/organizations', requirePlatformAdmin(), async (request: Au
   }
 });
 
+// Customer 360 source-of-truth endpoint (Revenue Foundation phase) — a
+// bounded, joined snapshot (counts + recent N, never unbounded child
+// collections; see adminCustomer360Service.ts). Gated by the dedicated
+// CUSTOMER_360_VIEW capability since this is the single most
+// customer-data-sensitive admin view in the system — every access is
+// logged, not just denials.
+apiRouter.get(
+  '/admin/organizations/:id',
+  requirePlatformAdmin(),
+  requirePlatformCapability('CUSTOMER_360_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const detail = await getOrganizationDetail(request.params.id);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          service: 'api',
+          event: 'customer_360_accessed',
+          actorUserId: request.auth!.sub,
+          organizationId: request.params.id,
+        })
+      );
+      response.json({ success: true, data: detail });
+    } catch (error: any) {
+      if (error.code === 'ORGANIZATION_NOT_FOUND') {
+        return response.status(404).json({ success: false, error: { code: error.code, message: error.message } });
+      }
+      next(error);
+    }
+  }
+);
+
 apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {
     const { suspended, reason } = adminOrgStatusBodySchema.parse(request.body);
@@ -2891,6 +2986,122 @@ apiRouter.post('/admin/billing/reconciliation', requirePlatformAdmin(), async (r
     next(error);
   }
 });
+
+// Revenue Intelligence summary — read-time aggregation, no materialized
+// table (see revenueIntelligenceService.ts header for the full semantic
+// rules). Gated by FINANCE_VIEW in addition to platformAdmin, since revenue
+// figures are the first capability-scoped admin surface this phase adds.
+apiRouter.get(
+  '/admin/revenue/summary',
+  requirePlatformAdmin(),
+  requirePlatformCapability('FINANCE_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      let period;
+      if (request.query.start && request.query.end) {
+        period = resolvePeriod({ start: request.query.start as string, end: request.query.end as string });
+      } else {
+        const periodParam = (request.query.period as string) || 'current_month';
+        if (periodParam === 'today' || periodParam === 'current_month' || periodParam === 'previous_month') {
+          period = resolvePeriod(periodParam);
+        } else {
+          period = resolvePeriod('current_month');
+        }
+      }
+
+      const summary = await revenueIntelligenceService.getSummary(period);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          service: 'api',
+          event: 'revenue_summary_generated',
+          actorUserId: request.auth!.sub,
+          period: period.label,
+        })
+      );
+      response.json({ success: true, data: summary });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+const adminRefundRequestBodySchema = z.object({
+  organizationId: z.string().uuid(),
+  paymentId: z.string().uuid(),
+  amountInPaise: z.number().int().positive(),
+  reason: z.string().min(3).max(500),
+  currentPassword: z.string().min(1),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+
+// Refund issuance — a money-moving operation, gated by the dedicated
+// REFUND_ISSUE capability (not just platformAdmin), re-authenticated via
+// the caller's current password, idempotent, and fully audit-logged. See
+// refundService.ts for the complete safety model.
+apiRouter.post(
+  '/admin/refunds',
+  requirePlatformAdmin(),
+  requirePlatformCapability('REFUND_ISSUE'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const input = adminRefundRequestBodySchema.parse(request.body);
+      const refund = await refundService.requestAndIssueRefund({
+        ...input,
+        requestedByUserId: request.auth!.sub,
+        ipAddress: getClientIp(request),
+      });
+      response.status(201).json({ success: true, data: refund });
+    } catch (error) {
+      if (error instanceof RefundValidationError) {
+        return response.status(400).json({ success: false, error: { code: error.code, message: error.message } });
+      }
+      next(error);
+    }
+  }
+);
+
+apiRouter.get(
+  '/admin/refunds',
+  requirePlatformAdmin(),
+  requirePlatformCapability('FINANCE_VIEW'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const organizationId = request.query.organizationId as string | undefined;
+      const cursor = request.query.cursor as string | undefined;
+      const limit = request.query.limit ? Number(request.query.limit) : undefined;
+      const result = await refundService.listRefunds({ organizationId, cursor, limit });
+      response.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Queue operational visibility (Revenue Foundation phase, Item 4) — mounts
+// Bull Board over the real, already-existing BullMQ queues (never a
+// hardcoded/fake list). Never public: gated by platformAdmin + a
+// method-aware capability (OPERATIONS_VIEW for reads, OPERATIONS_MANAGE for
+// any mutation), and every mutation is audit-logged before being handed to
+// Bull Board's own handler. See admin/queueBoard.ts for the webhook-queue
+// job-data sanitization (the only queue whose payload carries a sensitive
+// field — its signing secret hash).
+apiRouter.use(
+  '/admin/queues',
+  requirePlatformAdmin(),
+  requireOperationsCapability(),
+  auditBullBoardMutations(),
+  buildQueueBoardRouter({
+    audit: auditQueue,
+    monitoring: monitoringQueue,
+    vault: vaultQueue,
+    report: reportQueue,
+    webhook: webhookQueue,
+    'agency-competitor': competitorQueue,
+    'agency-prospect': prospectQueue,
+    'agency-pitch': pitchQueue,
+  })
+);
 
 apiRouter.get('/admin/audit-logs', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
   try {

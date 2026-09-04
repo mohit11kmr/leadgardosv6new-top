@@ -12,6 +12,7 @@ export * from './claim-validator.js';
 export * from './pagination.js';
 export * from './request-utils.js';
 export * from './evidence.js';
+export * from './network-evidence.js';
 export * from './auto-fix.js';
 export * from './whatsapp-link-tool.js';
 export * from './vault-remediation.js';

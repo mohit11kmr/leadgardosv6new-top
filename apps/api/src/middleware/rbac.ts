@@ -112,6 +112,77 @@ export function requirePlatformAdmin() {
   };
 }
 
+/**
+ * Fine-grained internal capabilities for platformAdmin users (Revenue
+ * Foundation phase). Additive to, never a replacement for,
+ * requirePlatformAdmin(): every existing admin route keeps using the plain
+ * boolean gate unchanged. Only the new routes this phase introduces
+ * (refunds, revenue, customer-360, operations/queues, security-event
+ * viewing) require a specific capability on top of platformAdmin=true —
+ * deliberately a short, fixed list rather than a full role system, per the
+ * R&D document's explicit "do not implement 20 roles for appearance"
+ * instruction. Existing platformAdmin users were backfilled with every
+ * capability below in the migration that introduced this column, so no
+ * existing admin loses access to anything they could already do.
+ */
+export type PlatformCapability =
+  | 'FINANCE_VIEW'
+  | 'REFUND_ISSUE'
+  | 'OPERATIONS_VIEW'
+  | 'OPERATIONS_MANAGE'
+  | 'CUSTOMER_360_VIEW'
+  | 'SECURITY_VIEW';
+
+/**
+ * Method-aware capability gate for the queue operations board: a GET
+ * (viewing queue/job state) only requires OPERATIONS_VIEW; anything else
+ * (retry/remove/promote/clean/pause — all mutations) requires the stronger
+ * OPERATIONS_MANAGE. Kept centralized here rather than duplicated inline in
+ * routes.ts so the capability requirement for a mutation can never
+ * accidentally drift to the weaker VIEW-only check.
+ */
+export function requireOperationsCapability() {
+  return async (request: AuthRequest, response: Response, next: NextFunction) => {
+    const capability: PlatformCapability = request.method === 'GET' ? 'OPERATIONS_VIEW' : 'OPERATIONS_MANAGE';
+    return requirePlatformCapability(capability)(request, response, next);
+  };
+}
+
+export function requirePlatformCapability(capability: PlatformCapability) {
+  return async (request: AuthRequest, response: Response, next: NextFunction) => {
+    if (!request.auth) {
+      return response.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHENTICATED', message: 'Authentication required' },
+      });
+    }
+
+    const user = await db.user.findUnique({
+      where: { id: request.auth.sub },
+      select: { id: true, platformAdmin: true, isDisabled: true, platformCapabilities: true },
+    });
+
+    if (!user || user.isDisabled || !user.platformAdmin) {
+      return response.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Platform administrator access required' },
+      });
+    }
+
+    if (!user.platformCapabilities.includes(capability)) {
+      return response.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: `Missing internal capability: ${capability}`,
+        },
+      });
+    }
+
+    next();
+  };
+}
+
 export function requirePermission(capability: Capability) {
   return async (request: AuthRequest, response: Response, next: NextFunction) => {
     if (!request.auth) {

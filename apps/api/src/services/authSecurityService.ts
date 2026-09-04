@@ -1,4 +1,6 @@
 import { db } from '@leadguard/database';
+import { config } from '@leadguard/config';
+import { emailProvider } from '@leadguard/shared/dist/server-only/email-provider.js';
 import {
   generateSecureToken,
   hashPassword,
@@ -33,6 +35,36 @@ export class AuthSecurityService {
       await recordSecurityEvent('PASSWORD_RESET_REQUEST', user.id, ipAddress, {
         email: normalizedEmail,
       });
+
+      // Awaited (not fire-and-forget) so the caller/tests can rely on the
+      // send having actually completed by the time this method returns, but
+      // wrapped so a delivery failure (e.g. SMTP down) never throws past
+      // this point — that would either leak account existence (error only
+      // for real accounts) or leak infrastructure problems to an
+      // unauthenticated caller. The generic response is returned regardless
+      // of email outcome; the outcome is only ever observable via the
+      // structured log. NEVER log rawToken/the reset URL itself.
+      const resetUrl = `${config.APP_URL}/reset-password?token=${rawToken}`;
+      try {
+        await emailProvider.sendEmail({
+          to: normalizedEmail,
+          subject: 'Reset your LeadGuard password',
+          body: `We received a request to reset your LeadGuard password. This link expires in 1 hour and can only be used once:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
+        });
+        console.log(
+          JSON.stringify({ level: 'info', service: 'api', event: 'password_reset_email_sent', userId: user.id })
+        );
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            service: 'api',
+            event: 'password_reset_email_failed',
+            userId: user.id,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
+        );
+      }
     }
 
     return {
@@ -89,6 +121,10 @@ export class AuthSecurityService {
     const user = await db.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found');
 
+    if (user.emailVerifiedAt) {
+      return { message: 'This email address is already verified.', alreadyVerified: true };
+    }
+
     const rawToken = generateSecureToken(32);
     const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -100,6 +136,28 @@ export class AuthSecurityService {
         expiresAt,
       },
     });
+
+    const verifyUrl = `${config.APP_URL}/verify-email?token=${rawToken}`;
+    try {
+      await emailProvider.sendEmail({
+        to: user.email,
+        subject: 'Verify your LeadGuard email address',
+        body: `Please confirm your email address to finish setting up your LeadGuard account. This link expires in 24 hours and can only be used once:\n\n${verifyUrl}`,
+      });
+      console.log(
+        JSON.stringify({ level: 'info', service: 'api', event: 'verification_email_sent', userId })
+      );
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          service: 'api',
+          event: 'verification_email_failed',
+          userId,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        })
+      );
+    }
 
     return {
       message: 'Verification link dispatched.',

@@ -330,3 +330,133 @@ Do not chase feature breadth against any of these four competitors individually 
 NEW  docs/RND_COMPETITIVE_FEATURE_MINING.md   (this file)
 ```
 No LeadGuard application code, schema, or tests were changed to produce this document. The only code-adjacent activity this phase was read-only source inspection (`packages/shared/src/scanners/tracking.ts`, `apps/worker/src/audit/renderedFetch.ts`, `business-impact.ts`, `auto-fix.ts`, `pitchService.ts`, `prospectService.ts`) plus running the existing `tests/retry.test.ts` in isolation to confirm the idempotency bug is real and pre-existing — no fix was applied, per this phase's own "do not begin coding" rule.
+
+---
+
+## 23. P0 Implementation Outcome
+
+Implemented as a dedicated follow-on phase ("Detection Integrity + Paid-Promise Correctness"). Full technical reference: `docs/DETECTION_INTEGRITY.md`.
+
+### 1. Monitoring scheduler
+
+**Previous state believed (per §2/§10 above): "coded but never invoked."** Pre-implementation re-verification found this was **stale** — `apps/worker/src/worker.ts` already calls `monitoringScheduler.start(config.MONITOR_SCHEDULER_INTERVAL_MS)` at boot and `.stop()` on graceful shutdown, guarded by an existing regression test (`tests/worker-wiring.test.ts`) explicitly written for this exact prior bug. `apps/worker/src/monitoring/processor.ts` and `scheduler.ts` already implement atomic Redis-lock + DB-claim double protection, per-scheduled-slot idempotency via a unique DB constraint, and optimistic baseline-version concurrency control. 25 pre-existing tests across 16 files already covered concurrent-claim safety, retry idempotency, manual-run concurrency, and baseline ordering — all passing before this phase touched anything.
+
+**What was actually done**: (1) upgraded `scheduler.ts`'s logging from ad-hoc `console.error` strings to the structured JSON convention used elsewhere in the worker, adding previously-missing success-path events (`scheduler_initialized`, `scheduler_job_triggered`, `scheduler_cycle_completed`); (2) added `tests/monitoring/scheduler-disabled.test.ts` (3 tests) covering the one genuinely untested scenario — a disabled or archived `MonitoringConfig` is never claimed, tested directly against `claimMonitorSlot` (the sweep-level `enqueueDueMonitors` test was dropped after discovering its `take: 50` due-configs query is non-deterministic in this shared test DB — a pre-existing suite characteristic, not something this phase introduced).
+
+**Files changed**: `apps/worker/src/monitoring/scheduler.ts` (logging only, no behavior change).
+**Tests added**: `tests/monitoring/scheduler-disabled.test.ts` (3 tests, all passing).
+**Verification**: full monitoring suite (28 tests, 17 files) passes; `tests/worker-wiring.test.ts` passes.
+**Known limitation**: relative-interval scheduling (no timezone concern, by design) means no periodic sweep proactively resurfaces a long-orphaned lock — see Retry §3 below for the related audit-side limitation.
+
+### 2. Runtime tracking verification (network-verified tracking)
+
+**Previous state (confirmed by direct source read)**: `packages/shared/src/scanners/tracking.ts` did — and still does — static regex signature matching only (GA4 measurement ID, `fbq()` calls, GTM container IDs) against page HTML. `apps/worker/src/audit/renderedFetch.ts`'s headless-Chromium rescan pass returned only `page.content()`; it never inspected network traffic. A tag's *installation code being present* and a tag *actually sending an event* were indistinguishable.
+
+**Implementation**: added `packages/shared/src/network-evidence.ts` — pure, browser-safe types and matching logic distinguishing `FIRED` (a real matching request observed), `NOT_OBSERVED` (a real capture ran, nothing matched), and `NOT_VERIFIED` (no capture attempt was made or it failed — never reported as a problem). Extended the *existing* rendered-fetch Playwright pass (no second browser, no new crawler) with `attachNetworkEvidenceCapture`, which wires `page.on('request')` and reduces matched requests to hostname+path plus a narrow query-param allowlist (GA4's `tid`/`en` only) — never headers, cookies, or full query strings. `apps/worker/src/audit/aggregation.ts`'s `evaluateWebsiteLevelScanners` now accepts an optional `TrackingRuntimeEvaluation` and emits three new, appropriately-hedged findings (`GA4_NOT_FIRING`, `META_PIXEL_NOT_FIRING`, `GTM_NOT_FIRING`, MEDIUM severity) when code is present but a real capture observed nothing — while an unverified capture (rescan disabled/failed) produces no finding at all, and a network-observed-but-statically-absent tag upgrades the "missing" determination rather than false-flagging it. GTM's verification is honestly scoped to "the container script loaded," documented as not proving every tag inside it fired (see `DETECTION_INTEGRITY.md` §2).
+
+**Files changed**: `packages/shared/src/network-evidence.ts` (new), `packages/shared/src/index.ts` (barrel export), `packages/shared/package.json` (no new deps — network-evidence.ts is pure TS), `apps/worker/src/audit/renderedFetch.ts` (extended return shape + capture), `apps/worker/src/audit/aggregation.ts` (runtime-aware tracking findings), `apps/worker/src/audit/orchestrator.ts` (wires capture into the existing rescan call, structured logging for capture outcome).
+
+**Tests added**: `packages/shared/src/network-evidence.test.ts` (15 tests — pure matching/evaluation logic), `apps/worker/src/audit/renderedFetch.test.ts` (extended: 10 tests total, including 6 new ones using `page.route()` to fulfill real tracking-provider hostnames entirely locally — zero external network dependency — proving FIRED-evidence capture, multi-provider capture, duplicate-request handling, non-tracking-request exclusion, and header/cookie/query redaction), `apps/worker/src/audit/aggregation.test.ts` (extended: 13 tests total, 6 new covering MISSING vs. NOT_FIRING vs. silent-when-unverified vs. upgrade-on-runtime-only-detection, across all three providers).
+
+**Verification**: 31 new/changed tests, all passing; full worker typecheck and `apps/web` production build both clean (network-evidence.ts confirmed browser-safe).
+
+**Known limitation**: capture only runs once per audit, on the homepage, only when `ENABLE_JS_RENDERED_RESCAN` is on — matching the pre-existing rescan's own scope, not expanded to every crawled page (that would be a materially larger, unrequested change to crawl cost/duration).
+
+### 3. Audit retry / idempotency
+
+**Previous state (confirmed, reproduced in isolation before any fix)**: `AuditOrchestrator.execute`'s claim guard excluded only `CANCELLED`/`COMPLETED` from re-claiming — which (a) incorrectly rejected re-running a `COMPLETED` audit at all (the exact `tests/retry.test.ts` failure), and (b) separately, and more seriously, never actually excluded a genuinely-`RUNNING` audit from being reclaimed, meaning two concurrent executions of the same audit were never actually prevented — a real, previously-undetected duplicate-execution hole, most exploitable via `guestScanService.ts`/`publicAuditService.ts`, whose enqueue calls have no deterministic BullMQ `jobId` (unlike the authenticated route).
+
+**Implementation**: redefined the claim contract as CANCELLED = never reclaimable; RUNNING = reclaimable only once stale (`startedAt` older than `MAX_AUDIT_DURATION_MS` + a 30s grace buffer, indicating an orphaned worker-crashed run); QUEUED/FAILED/PARTIAL/COMPLETED = always reclaimable (retry and explicit re-run are both legitimate). A claim attempt that loses the race now closes out its own `AuditRun` row as `CANCELLED` with a `CLAIM_REJECTED_*` error code instead of leaving it stuck at `RUNNING` forever.
+
+**Files changed**: `apps/worker/src/audit/orchestrator.ts` (claim query + structured logging).
+
+**Tests added**: `tests/audit/retry-idempotency-contract.test.ts` (6 new tests: failed→retry, completed→explicit re-run, cancelled→never-reclaimable, fresh-running→duplicate-delivery-rejected, stale-running→worker-crash-recovery, N-concurrent-calls→exactly-one-claims).
+
+**Verification**: `tests/retry.test.ts` now passes for the correct reason (both runs claim and complete, 2 distinct `AuditRun` rows, consistent findings/score) — assertions were not weakened or deleted. All 6 new tests pass.
+
+**Known limitation**: no periodic sweep proactively flips a long-orphaned `RUNNING` audit to `FAILED` if nothing ever retries it — it stays reclaimable (and visibly `RUNNING`) until the next execution attempt for that `auditId`. Judged out of scope (a new periodic job is new architecture, not a fix to existing logic).
+
+### 4. Real PDF generation
+
+**Previous state (confirmed by direct source read)**: PDF *generation* was already real — `apps/worker/src/report/pdfWorker.ts`'s `renderHtmlToPdf` already used genuine headless-Chromium `page.pdf()`, with an existing regression test (`tests/reports/pdf-generation.test.ts`) proving the `%PDF-` magic header. The actual gap was **download**: `Report.pdfPath`/`pdfStatus` were populated but no route anywhere served the bytes back — only `POST /reports/:id/pdf` existed (enqueues generation, returns a job status), with no `GET` route at all.
+
+**Implementation**: moved the `StorageProvider`/`LocalStorageProvider`/`S3StorageProvider` abstraction from `apps/worker` into `packages/shared/src/server-only/report-storage.ts` (server-only subpath, matching the existing `secret-encryption.ts` convention) so both `apps/api` and `apps/worker` share one implementation. Added `reportService.getReportPdfBytes`/`getPublicReportPdfBytes` and two new routes: `GET /reports/:id/pdf` (authenticated, org-scoped) and `GET /reports/share/:token/pdf` (public, reusing the existing `resolveShareLink` password/expiry/revocation logic).
+
+**Files changed**: `packages/shared/src/server-only/report-storage.ts` (new), `packages/shared/package.json` (+`@leadguard/config`, `+@aws-sdk/client-s3`, both already used elsewhere in the monorepo at the same versions), `apps/worker/src/report/pdfWorker.ts` (imports + re-exports from the new shared location instead of defining locally — public API surface unchanged, existing test unaffected), `apps/api/src/services/reportService.ts` (two new methods), `apps/api/src/routes.ts` (two new routes).
+
+**Tests added**: `tests/reports/pdf-download.test.ts` (9 new tests: real-PDF-bytes + correct headers, no-auth rejected, cross-org tenant isolation, not-ready surfaced as 409 not corrupted bytes, FAILED-status surfaced cleanly, share-link download with no auth, password-protected share-link, revoked share-link rejected, white-label branding preserved in the HTML feeding the PDF).
+
+**Verification**: existing `tests/reports/pdf-generation.test.ts` (2 tests) still passes unchanged after the storage-provider relocation; all 9 new tests pass.
+
+**Known limitation**: PDF generation itself remains synchronous within the BullMQ 'report' queue job (not further job-split) — measured at well under a second for current report sizes in testing, so no additional queueing infrastructure was added, per the phase's own "measure first" instruction.
+
+### Overall regression verification
+
+Full `vitest` suite: **395 passed, 1 pre-existing skip, 0 failed** (119 files) — up from the 349-passing baseline, with zero regressions. Full monorepo typecheck (`api`, `worker`, `shared`, `database`, `config`, `web`) clean. `apps/web` production build clean (confirms `network-evidence.ts` is genuinely browser-safe in the shared barrel). Full Playwright E2E suite: see final implementation report.
+
+---
+
+## 24. P1 Detection Intelligence Outcome
+
+Full technical reference: `docs/DETECTION_INTELLIGENCE_P1.md`. This section corrects/updates the record left by §23 and the original report body.
+
+**Correction to this document's own prior record**: §2/§7/§10/§13/§15/§20 above cited "the browser rendered-fetch path is not DNS-pinned (SEC-1, disclosed not fixed)" as a live gap. As of this phase, **that gap is closed** — see §1-2 below. Do not treat the SSRF/DNS-pinning language in the earlier sections of this document as current; `docs/DETECTION_INTELLIGENCE_P1.md` is the up-to-date reference.
+
+### 1. Browser SSRF / DNS-rebinding boundary — CLOSED
+
+**Previous state**: disclosed, unfixed gap — `renderedFetch.ts`'s Chromium navigation re-resolved DNS independently of the one-time `validateExternalUrl` check (a TOCTOU/rebinding window), and *no* subresource request (images/scripts/XHR the audited page's own JS makes) was validated at all. `pdfWorker.ts`'s `renderHtmlToPdf` had the same class of gap for one specific subresource (a customer's white-label logo URL, already pinned once by `validateAndCheckSafeLogo` but re-fetched unpinned by Chromium at PDF-render time) — found during this phase's fresh Phase-0 re-verification, not previously documented.
+
+**Implementation**: new `apps/worker/src/net/ssrfSafeProxy.ts` — a local forward proxy (plain Node `http`/`net`, no new dependency) that both Chromium launch sites now route through via Playwright's `proxy` option. It resolves and classifies every request's destination (reusing the existing `isPrivateOrReservedHost`) and pins the actual connection to that validated address — for HTTPS, by tunneling the raw TCP socket via CONNECT without ever terminating TLS, so certificate/SNI validation is unaffected. This closes the gap for the initial navigation, every subresource, and every redirect hop, since each is an independent request that must pass back through the same proxy.
+
+**Tests**: 22 new deterministic tests (`ssrfSafeProxy.test.ts`, ~150ms, no browser/Docker dependency) covering localhost/loopback/RFC1918/link-local/metadata/IPv6/IPv4-mapped-IPv6/DNS-rebinding-simulated-via-mock/plain-HTTP/fixtures-bypass-parity. Full detail: `docs/DETECTION_INTELLIGENCE_P1.md` §1-2.
+
+**Performance**: measured, not assumed — 5-run average, proxy vs. no-proxy: 1183ms vs 1266ms (within noise; no regression).
+
+### 2. Runtime tracking — audited, one real gap fixed
+
+GA4/Meta/GTM script-load-vs-beacon distinction, regional GA4 endpoints, and the GTM "container loaded ≠ every tag fired" honest limitation were all already correct and were preserved unchanged, per instruction. One real inconsistency found and fixed: Meta Pixel's `relevantQueryParams` allowlist was empty while GA4's wasn't — added `id`/`ev` (pixel ID + event label), explicitly excluding Advanced Matching's hashed-PII params, with a dedicated test proving the exclusion.
+
+### 3. Consent/CMP + correlation — NEW
+
+`packages/shared/src/scanners/consent.ts` — 10 named CMP vendors, generic IAB TCF detection, generic banner fallback, Google Consent Mode v2 default/update detection. Correlated against the already-existing `TrackingRuntimeEvaluation`: because LeadGuard's headless browser never simulates a consent-banner click, any tracker observed `FIRED` during the capture window necessarily fired without consent, by construction — no click-simulation engineering was needed to make this a directly observable fact rather than an inference. `UNKNOWN` (no CMP, or tracking runtime unavailable) is never escalated to a failure. 23 tests (`consent.test.ts` + `detectionIntelligenceP1.test.ts`'s consent-correlation cases).
+
+### 4. Structured data / hreflang / duplicate content — NEW
+
+- Structured data (`structured-data.ts`, LG-040, registered as a normal PAGE scanner): JSON-LD parse validation, `@type` extraction (including `@graph`), same-page duplicate-type detection, Microdata/RDFa presence. 14 tests.
+- Hreflang (`hreflang.ts`, LG-041, PAGE scanner + website-level reciprocity check): malformed lang codes, same-page conflicting declarations, canonical self-reference conflicts, cross-page reciprocity (a target outside the crawl budget is never assumed broken). 14 tests.
+- Duplicate content (`duplicateContent.ts`, LG-044, worker-side — needs the full page set): exact-match-after-normalization hashing (a deliberate, explainable, false-positive-averse choice over a fuzzy similarity threshold), with pagination and canonical-consolidation exemptions. 8 tests.
+
+### 5. Crawl discovery — genuinely missing, now implemented
+
+**Verified first** (per instruction, not assumed): `crawler.ts`'s `discoverLinks` had zero robots.txt/sitemap awareness — confirmed by direct source read, this was a real gap, not a stale finding. **Implementation**: `robotsSitemap.ts` fetches and parses robots.txt (wildcard `User-agent: *` Disallow rules + `Sitemap:` directives) and sitemap.xml/sitemap-index (recursive, bounded) through the existing pinned-fetch primitives — not `fetchPage()`, which enforces `text/html` and would reject these content types. Wired into `orchestrator.ts`: Disallow rules gate `BoundedCrawler` via a new optional `isUrlAllowed` predicate (additive, backward-compatible — `undefined` for any caller that doesn't opt in), and up to 5 sitemap-only pages the link-crawl didn't reach are fetched as a supplement, budget-bounded. 10 tests, fully local-fixture-based.
+
+### 6. Business impact integration — verified with real evidence, not asserted
+
+All five new finding families were registered in `SCORE_RULES_V3` (`scoring.ts`) using the same 0-100 deduction scale, aggregation policies, and severity tiers every pre-existing rule uses — no new impact-modeling logic was written. Proven with 6 dedicated tests (`detection-intelligence-p1-business-impact.test.ts`) showing a new finding measurably moves `calculateScores`' pillar output and `buildBusinessImpact`'s ₹ figure relative to a clean baseline, and that the SECURITY-category findings use the pre-existing category weight (0.7) — not an invented one.
+
+### Overall regression verification
+
+Full `vitest` suite: **493 passed, 1 pre-existing skip, 1 confirmed pre-existing full-suite-load flake** (re-ran in isolation, passed in 716ms — matches the documented "genuinely flaky under full-suite load, timeout at the default 5000ms" pattern in `CLAUDE.md`, unrelated file, not touched this phase) — up from the 395-passing P0 baseline, zero real regressions. Full monorepo typecheck clean. Full Playwright E2E suite: see final P1 implementation report below.
+
+### Files changed/added this phase
+
+```
+NEW  apps/worker/src/net/ssrfSafeProxy.ts (+test)
+NEW  packages/shared/src/scanners/consent.ts (+test)
+NEW  packages/shared/src/scanners/structured-data.ts (+test)
+NEW  packages/shared/src/scanners/structured-data-page.ts (+test)
+NEW  packages/shared/src/scanners/hreflang.ts (+test)
+NEW  packages/shared/src/scanners/hreflang-page.ts (+test)
+NEW  apps/worker/src/audit/duplicateContent.ts (+test)
+NEW  apps/worker/src/audit/robotsSitemap.ts (+test)
+NEW  apps/worker/src/audit/detectionIntelligenceP1.ts (+test)
+NEW  packages/shared/src/detection-intelligence-p1-business-impact.test.ts
+NEW  docs/DETECTION_INTELLIGENCE_P1.md
+M    apps/worker/src/audit/renderedFetch.ts (+test) — proxy wiring
+M    apps/worker/src/report/pdfWorker.ts — proxy wiring
+M    apps/worker/src/audit/orchestrator.ts — proxy is automatic (inside renderedFetch), robots/sitemap + P1 findings wiring
+M    apps/worker/src/audit/aggregation.ts — no change needed this phase (P1 findings live in detectionIntelligenceP1.ts instead, to keep the two concerns separable)
+M    apps/worker/src/audit/crawler.ts, types.ts — additive isUrlAllowed option
+M    packages/shared/src/scanners/index.ts, registry.ts, scoring.ts — new scanner registration + score rules
+M    docs/DETECTION_INTEGRITY.md — SEC-1 marked closed
+```

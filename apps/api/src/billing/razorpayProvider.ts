@@ -10,6 +10,8 @@ import type {
   VerifyWebhookInput,
   RazorpayOrder,
   RazorpayPayment,
+  CreateRefundInput,
+  RazorpayRefund,
 } from './types.js';
 
 export type PaymentProviderMode = 'MOCK' | 'TEST' | 'LIVE';
@@ -258,6 +260,50 @@ export class RazorpayProvider implements PaymentProvider {
     }
 
     return data as RazorpayPayment;
+  }
+
+  /**
+   * Issues a refund against a captured payment. Idempotent on Razorpay's
+   * side via the Idempotency-Key header — a retried call with the same key
+   * returns the original refund rather than creating a second one, which is
+   * what makes it safe to call this from a request that might itself be
+   * retried (see refundService.ts's own idempotencyKey handling for the
+   * local-database half of this same guarantee).
+   */
+  async refundPayment(input: CreateRefundInput): Promise<RazorpayRefund> {
+    if (this.mode === 'MOCK') {
+      return {
+        id: `rfnd_mock_${randomBytes(12).toString('hex')}`,
+        entity: 'refund',
+        amount: input.amountInPaise,
+        currency: 'INR',
+        payment_id: input.paymentId,
+        status: 'processed',
+        created_at: Math.floor(Date.now() / 1000),
+      };
+    }
+
+    const response = await fetch(`${this.getBaseUrl()}/payments/${input.paymentId}/refund`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this.getAuthHeader(),
+        'X-Razorpay-Idempotency-Key': input.idempotencyKey,
+      },
+      body: JSON.stringify({
+        amount: input.amountInPaise,
+        notes: input.notes || {},
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        `[RazorpayProvider] Refund failed: ${data.error?.description || response.statusText}`
+      );
+    }
+
+    return data as RazorpayRefund;
   }
 
   /**

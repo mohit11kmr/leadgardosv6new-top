@@ -9,6 +9,7 @@ import {
   type Finding,
   type PageRecord,
   type ScannerContext,
+  type TrackingRuntimeEvaluation,
 } from '@leadguard/shared';
 
 export interface WebsiteSignals {
@@ -89,7 +90,8 @@ export async function evaluateWebsiteLevelScanners(
   siteUrl: string,
   signals: WebsiteSignals,
   pages: PageRecord[],
-  context?: ScannerContext
+  context?: ScannerContext,
+  trackingRuntime?: TrackingRuntimeEvaluation
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
 
@@ -192,8 +194,15 @@ export async function evaluateWebsiteLevelScanners(
     });
   }
 
-  // 4. Tracking probes (Meta Pixel, GA4, GTM)
-  if (!signals.hasMetaPixel) {
+  // 4. Tracking probes (Meta Pixel, GA4, GTM). trackingRuntime (present only
+  // when the JS-rendered rescan ran — see orchestrator.ts) can upgrade a
+  // static "missing" signal to "present" when a matching network request
+  // fired even without a static code signature, and can flag a
+  // present-but-not-firing tag as a distinct, more specific problem than
+  // either silence or a misleading "missing" finding. See
+  // docs/DETECTION_INTEGRITY.md for the full static/runtime evidence model.
+  const metaPixelPresent = signals.hasMetaPixel || trackingRuntime?.metaPixel.runtimeStatus === 'FIRED';
+  if (!metaPixelPresent) {
     findings.push({
       ruleId: 'LG-006',
       internalKey: 'META_PIXEL_MISSING',
@@ -215,9 +224,33 @@ export async function evaluateWebsiteLevelScanners(
       scoreImpact: 4,
       businessImpact: 'Paid Meta ad campaigns cannot track conversions or optimize ad spend effectively.',
     });
+  } else if (trackingRuntime?.metaPixel.runtimeStatus === 'NOT_OBSERVED') {
+    findings.push({
+      ruleId: 'LG-006',
+      internalKey: 'META_PIXEL_NOT_FIRING',
+      normalizedIssueKey: 'META_PIXEL_NOT_FIRING',
+      category: 'ADVERTISING',
+      scope: 'WEBSITE',
+      severity: 'MEDIUM',
+      title: 'Meta Pixel code found, but no pixel request was observed firing',
+      description:
+        'Meta Pixel code is present on the page, but a live browser visit did not observe a corresponding request to facebook.com/tr. This may indicate the pixel is blocked by a consent manager or ad-blocker, misconfigured, or only loads under conditions this scan did not trigger — manual verification is recommended.',
+      affectedUrl: siteUrl,
+      evidence: {
+        source: 'network_capture',
+        observed: 'Meta Pixel code present; no facebook.com/tr request observed during a live page visit',
+        location: siteUrl,
+        why: 'Tracking code that never actually sends events provides no real conversion attribution, even though it appears installed.',
+        recommendation: 'Verify the pixel fires using Meta Events Manager’s Test Events tool, and check for consent-gating or CSP issues blocking it.',
+      },
+      recommendation: 'Verify the Meta Pixel actually fires an event using Meta’s Test Events tool.',
+      scoreImpact: 3,
+      businessImpact: 'If genuinely not firing, ad campaigns are optimizing against incomplete or absent conversion data.',
+    });
   }
 
-  if (!signals.hasGa4) {
+  const ga4Present = signals.hasGa4 || trackingRuntime?.ga4.runtimeStatus === 'FIRED';
+  if (!ga4Present) {
     findings.push({
       ruleId: 'LG-007',
       internalKey: 'GA4_MISSING',
@@ -239,9 +272,33 @@ export async function evaluateWebsiteLevelScanners(
       scoreImpact: 4,
       businessImpact: 'Website lacks basic traffic analytics and marketing funnel attribution data.',
     });
+  } else if (trackingRuntime?.ga4.runtimeStatus === 'NOT_OBSERVED') {
+    findings.push({
+      ruleId: 'LG-007',
+      internalKey: 'GA4_NOT_FIRING',
+      normalizedIssueKey: 'GA4_NOT_FIRING',
+      category: 'ADVERTISING',
+      scope: 'WEBSITE',
+      severity: 'MEDIUM',
+      title: 'GA4 code found, but no analytics request was observed firing',
+      description:
+        'A GA4 measurement ID or gtag() call is present on the page, but a live browser visit did not observe a corresponding request to google-analytics.com/g/collect. This may indicate the tag is blocked by a consent manager or ad-blocker, misconfigured, or only loads under conditions this scan did not trigger — manual verification is recommended.',
+      affectedUrl: siteUrl,
+      evidence: {
+        source: 'network_capture',
+        observed: 'GA4 code present; no /g/collect request observed during a live page visit',
+        location: siteUrl,
+        why: 'Analytics code that never sends events produces no real traffic or conversion data, even though it appears installed.',
+        recommendation: 'Verify events appear in GA4’s DebugView, and check for consent-gating or CSP issues blocking the tag.',
+      },
+      recommendation: 'Verify GA4 actually sends events using GA4’s DebugView.',
+      scoreImpact: 3,
+      businessImpact: 'If genuinely not firing, traffic and funnel reporting is silently incomplete or empty.',
+    });
   }
 
-  if (!signals.hasGtm) {
+  const gtmPresent = signals.hasGtm || trackingRuntime?.gtm.runtimeStatus === 'FIRED';
+  if (!gtmPresent) {
     findings.push({
       ruleId: 'LG-007',
       internalKey: 'GTM_MISSING',
@@ -261,6 +318,28 @@ export async function evaluateWebsiteLevelScanners(
       },
       recommendation: 'Consider deploying Google Tag Manager for centralized tag deployment.',
       scoreImpact: 4,
+    });
+  } else if (trackingRuntime?.gtm.runtimeStatus === 'NOT_OBSERVED') {
+    findings.push({
+      ruleId: 'LG-007',
+      internalKey: 'GTM_NOT_FIRING',
+      normalizedIssueKey: 'GTM_NOT_FIRING',
+      category: 'ADVERTISING',
+      scope: 'WEBSITE',
+      severity: 'MEDIUM',
+      title: 'GTM container code found, but the container script was not observed loading',
+      description:
+        'A Google Tag Manager container reference is present on the page, but a live browser visit did not observe the container script (googletagmanager.com/gtm.js) actually load. Note: this only confirms whether the container itself loads, not whether every tag configured inside it fires — verifying individual tags requires checking inside GTM’s own Preview mode.',
+      affectedUrl: siteUrl,
+      evidence: {
+        source: 'network_capture',
+        observed: 'GTM container reference present; no googletagmanager.com/gtm.js request observed during a live page visit',
+        location: siteUrl,
+        why: 'A container that never loads means none of the tags configured inside it can fire either.',
+        recommendation: 'Verify the container loads using GTM’s own Preview/Debug mode, and check for consent-gating or CSP issues blocking it.',
+      },
+      recommendation: 'Verify the GTM container loads using GTM’s Preview mode.',
+      scoreImpact: 2,
     });
   }
 

@@ -16,6 +16,13 @@ export interface CrawlOptions {
   globalTimeoutMs: number;
   maxResponseBytes: number;
   countryMode?: 'IN' | 'GLOBAL';
+  /**
+   * When provided, a queued URL is skipped (neither fetched nor counted as
+   * a failure) if this returns false — used to honor robots.txt Disallow
+   * rules (see robotsSitemap.ts). Undefined means "everything allowed",
+   * preserving existing behavior for every caller that doesn't pass it.
+   */
+  isUrlAllowed?: (url: string) => boolean;
 }
 
 export interface CrawlQueueItem {

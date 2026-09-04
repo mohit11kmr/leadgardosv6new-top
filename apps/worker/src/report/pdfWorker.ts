@@ -2,101 +2,46 @@ import { Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { db } from '@leadguard/database';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { resolveAndValidateExternalUrl } from '@leadguard/shared';
 import { fetchPinned } from '@leadguard/shared/dist/server-only/pinned-fetch.js';
+import {
+  getStorageProvider,
+  LocalStorageProvider,
+  S3StorageProvider,
+  type StorageProvider,
+} from '@leadguard/shared/dist/server-only/report-storage.js';
 import { chromium } from 'playwright-core';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { startSsrfSafeProxy } from '../net/ssrfSafeProxy.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
-export interface StorageProvider {
-  save(filename: string, content: Buffer | string): Promise<string>;
-  get(filename: string): Promise<Buffer>;
-  getUrl(filename: string): string;
-}
-
-export class LocalStorageProvider implements StorageProvider {
-  private baseDir: string;
-
-  constructor(baseDir = 'uploads/reports') {
-    this.baseDir = baseDir;
-  }
-
-  async save(filename: string, content: Buffer | string): Promise<string> {
-    await mkdir(this.baseDir, { recursive: true });
-    const fullPath = join(this.baseDir, filename);
-    await writeFile(fullPath, content);
-    return `/uploads/reports/${filename}`;
-  }
-
-  async get(filename: string): Promise<Buffer> {
-    const fullPath = join(this.baseDir, filename);
-    return readFile(fullPath);
-  }
-
-  getUrl(filename: string): string {
-    return `/uploads/reports/${filename}`;
-  }
-}
-
-export class S3StorageProvider implements StorageProvider {
-  private bucket: string;
-  private client: S3Client;
-
-  constructor(bucket = config.S3_BUCKET) {
-    // Config validation (packages/config) already refuses to boot with
-    // REPORT_STORAGE=S3 unless S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY are set,
-    // so this never silently falls back to local disk like it used to.
-    this.bucket = bucket;
-    this.client = new S3Client({
-      region: config.S3_REGION,
-      credentials: {
-        accessKeyId: config.S3_ACCESS_KEY_ID!,
-        secretAccessKey: config.S3_SECRET_ACCESS_KEY!,
-      },
-    });
-  }
-
-  async save(filename: string, content: Buffer | string): Promise<string> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: filename,
-        Body: content,
-        ContentType: filename.endsWith('.pdf') ? 'application/pdf' : 'text/html',
-      })
-    );
-    return this.getUrl(filename);
-  }
-
-  async get(filename: string): Promise<Buffer> {
-    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: filename }));
-    const bytes = await res.Body!.transformToByteArray();
-    return Buffer.from(bytes);
-  }
-
-  getUrl(filename: string): string {
-    return `https://${this.bucket}.s3.${config.S3_REGION}.amazonaws.com/${filename}`;
-  }
-}
-
-export function getStorageProvider(): StorageProvider {
-  if (config.REPORT_STORAGE === 'S3') {
-    return new S3StorageProvider();
-  }
-  return new LocalStorageProvider();
-}
+// Re-exported for backward compatibility — apps/api's reportService also
+// needs these to read back what this worker writes (see report-storage.ts
+// for why the shared abstraction lives in packages/shared/server-only/
+// rather than duplicated per-app).
+export { getStorageProvider, LocalStorageProvider, S3StorageProvider, type StorageProvider };
 
 /**
  * Renders HTML to a real PDF buffer using a headless Chromium instance
  * (playwright-core, pointed at the browser binary already provisioned for
  * the E2E suite). Replaces the previous behavior of writing the raw HTML
  * string to disk and mislabeling it pdfStatus: READY / pdfPath.
+ *
+ * SECURITY: this HTML is server-generated (generateReportHtml), but it can
+ * embed one customer-controlled subresource URL — the org's white-label
+ * logo, already checked by validateAndCheckSafeLogo below. That earlier
+ * check pins its OWN validation fetch, but page.setContent()'s networkidle
+ * wait makes Chromium independently re-fetch that same <img src> to render
+ * it — a second, separate DNS resolution, and exactly the same
+ * validate-then-connect TOCTOU window as renderedFetch.ts's SEC-1 gap, just
+ * with a narrower (single, pre-vetted URL) blast radius. Routing through
+ * the same SsrfSafeProxy pins that render-time fetch too, closing it here
+ * as well rather than leaving a second, smaller instance of the same class
+ * of gap. See docs/DETECTION_INTELLIGENCE_P1.md.
  */
 export async function renderHtmlToPdf(html: string): Promise<Buffer> {
-  const browser = await chromium.launch({ headless: true });
+  const proxy = await startSsrfSafeProxy();
+  const browser = await chromium.launch({ headless: true, proxy: { server: proxy.url } });
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle' });
@@ -104,6 +49,7 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     return pdf;
   } finally {
     await browser.close();
+    await proxy.close().catch(() => {});
   }
 }
 

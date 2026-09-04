@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { aggregateWebsiteSignals, evaluateWebsiteLevelScanners, mergeRenderedSignals } from './aggregation.js';
-import type { PageRecord } from '@leadguard/shared';
+import { evaluateTrackingRuntime } from '@leadguard/shared';
+import type { NetworkEvidenceEntry, PageRecord, TrackingRuntimeEvaluation } from '@leadguard/shared';
 
 function makePage(overrides: Partial<PageRecord>): PageRecord {
   return {
@@ -106,5 +107,93 @@ describe('mergeRenderedSignals (headless-browser rescan merge)', () => {
     );
     expect(merged.isStore).toBe(true);
     expect(merged.hasCartLink).toBe(false);
+  });
+});
+
+describe('Network-verified tracking findings (evaluateWebsiteLevelScanners + trackingRuntime)', () => {
+  function ga4Entry(): NetworkEvidenceEntry {
+    return {
+      provider: 'GA4',
+      requestUrl: 'www.google-analytics.com/g/collect',
+      method: 'GET',
+      timestampMs: Date.now(),
+      pageUrl: 'https://shop.test/',
+      resourceType: 'xhr',
+      matchedSignature: 'www.google-analytics.com/g/collect',
+      evidenceType: 'FIRED',
+      confidence: 'HIGH',
+      relevantQueryParams: { tid: 'G-ABC', en: 'page_view' },
+    };
+  }
+
+  const noGa4Page = () => [makePage({ html: '<html><body>No tags here</body></html>' })];
+
+  it('emits the plain MISSING finding when static code is absent and no capture ran (no rendered rescan)', async () => {
+    const pages = noGa4Page();
+    const signals = aggregateWebsiteSignals(pages);
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, undefined);
+    expect(findings.some((f) => f.internalKey === 'GA4_MISSING')).toBe(true);
+    expect(findings.some((f) => f.internalKey === 'GA4_NOT_FIRING')).toBe(false);
+  });
+
+  it('does not overclaim "not firing" when capture never ran (NOT_VERIFIED) — silence, not a false problem', async () => {
+    const pages = noGa4Page();
+    const signals = aggregateWebsiteSignals(pages);
+    const trackingRuntime = evaluateTrackingRuntime([], false); // captureAttempted: false
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, trackingRuntime);
+    // Still absent statically and unverified at runtime → still the plain MISSING finding, nothing extra invented.
+    expect(findings.some((f) => f.internalKey === 'GA4_MISSING')).toBe(true);
+    expect(findings.some((f) => f.internalKey === 'GA4_NOT_FIRING')).toBe(false);
+  });
+
+  it('upgrades an absent static signal to present when the runtime capture observed it firing', async () => {
+    const pages = noGa4Page(); // no static GA4 signature anywhere
+    const signals = aggregateWebsiteSignals(pages);
+    const trackingRuntime = evaluateTrackingRuntime([ga4Entry()], true);
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, trackingRuntime);
+    // A real request fired even though static detection found nothing — must not report it as missing.
+    expect(findings.some((f) => f.internalKey === 'GA4_MISSING')).toBe(false);
+    expect(findings.some((f) => f.internalKey === 'GA4_NOT_FIRING')).toBe(false);
+  });
+
+  it('flags GA4_NOT_FIRING when static code is present but capture ran and observed nothing', async () => {
+    const pages = [makePage({ html: '<html><head><script>gtag("config", "G-ABC123");</script></head></html>' })];
+    const signals = aggregateWebsiteSignals(pages);
+    expect(signals.hasGa4).toBe(true);
+    const trackingRuntime = evaluateTrackingRuntime([], true); // captureAttempted: true, nothing matched
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, trackingRuntime);
+    const finding = findings.find((f) => f.internalKey === 'GA4_NOT_FIRING');
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe('MEDIUM');
+    expect(findings.some((f) => f.internalKey === 'GA4_MISSING')).toBe(false);
+  });
+
+  it('does not flag GA4_NOT_FIRING when static code is present and the runtime capture confirmed it fired', async () => {
+    const pages = [makePage({ html: '<html><head><script>gtag("config", "G-ABC123");</script></head></html>' })];
+    const signals = aggregateWebsiteSignals(pages);
+    const trackingRuntime = evaluateTrackingRuntime([ga4Entry()], true);
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, trackingRuntime);
+    expect(findings.some((f) => f.internalKey === 'GA4_MISSING')).toBe(false);
+    expect(findings.some((f) => f.internalKey === 'GA4_NOT_FIRING')).toBe(false);
+  });
+
+  it('evaluates Meta Pixel and GTM independently of GA4 in the same run', async () => {
+    const pages = [
+      makePage({
+        html: `<html><head>
+          <script>fbq('init', '123'); fbq('track', 'PageView');</script>
+        </head></html>`,
+      }),
+    ];
+    const signals = aggregateWebsiteSignals(pages);
+    expect(signals.hasMetaPixel).toBe(true);
+    expect(signals.hasGtm).toBe(false);
+
+    const trackingRuntime: TrackingRuntimeEvaluation = evaluateTrackingRuntime([], true);
+    const findings = await evaluateWebsiteLevelScanners('https://shop.test', signals, pages, undefined, trackingRuntime);
+
+    expect(findings.some((f) => f.internalKey === 'META_PIXEL_NOT_FIRING')).toBe(true);
+    expect(findings.some((f) => f.internalKey === 'GTM_MISSING')).toBe(true); // absent statically, unrelated to runtime
+    expect(findings.some((f) => f.internalKey === 'GTM_NOT_FIRING')).toBe(false);
   });
 });

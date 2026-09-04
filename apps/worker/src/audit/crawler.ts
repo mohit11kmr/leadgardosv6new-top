@@ -43,6 +43,7 @@ export class BoundedCrawler {
       globalTimeoutMs: options.globalTimeoutMs ?? 60_000,
       maxResponseBytes: options.maxResponseBytes ?? 2_000_000,
       countryMode: options.countryMode ?? 'IN',
+      isUrlAllowed: options.isUrlAllowed,
     };
   }
 
@@ -121,6 +122,15 @@ export class BoundedCrawler {
     onPageFailed?: (url: string, depth: number, parentUrl?: string, errorCode?: string) => Promise<void> | void
   ) {
     if (signal.aborted || this.pages.has(item.url) || item.depth > this.options.maxDepth) {
+      return;
+    }
+
+    // robots.txt Disallow — skip entirely (not a failure, not counted
+    // toward the fetched-page budget), matching how a compliant crawler
+    // is expected to behave. this.options.isUrlAllowed is undefined for
+    // every caller that doesn't opt in (see CrawlOptions), so this is a
+    // no-op for existing behavior unless explicitly wired up.
+    if (this.options.isUrlAllowed && !this.options.isUrlAllowed(item.url)) {
       return;
     }
 

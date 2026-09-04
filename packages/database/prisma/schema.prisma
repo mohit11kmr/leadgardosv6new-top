@@ -160,6 +160,12 @@ model User {
   isDisabled              Boolean                  @default(false)
   disabledReason          String?
   platformAdmin           Boolean                  @default(false)
+  // Fine-grained internal capabilities for platformAdmin users — additive
+  // to (never a replacement for) the platformAdmin boolean gate: a route
+  // still requires platformAdmin=true first, then checks this list for the
+  // specific capability. Empty for a non-admin user (irrelevant, since
+  // platformAdmin=false already blocks them). See docs/REVENUE_FOUNDATION_IMPLEMENTATION.md.
+  platformCapabilities    String[]                 @default([])
   emailVerifiedAt         DateTime?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -174,6 +180,8 @@ model User {
   notificationPreferences NotificationPreference[]
   vaultIgnoredFindings    VaultAuditFinding[]
   blogPosts               BlogPost[]
+  refundsRequested        Refund[]                  @relation("RefundRequestedBy")
+  refundsApproved         Refund[]                  @relation("RefundApprovedBy")
 }
 
 model Account {
@@ -278,6 +286,7 @@ model Organization {
   expressFixFulfillments  ExpressFixFulfillment[]
   expressFixLeads         ExpressFixLead[]
   funnelEvents            FunnelEvent[]
+  refunds                 Refund[]
 }
 
 model OrganizationMember {
@@ -761,8 +770,53 @@ model Payment {
   invoices              Invoice[]
   expressFixFulfillment ExpressFixFulfillment?
   expressFixLead        ExpressFixLead?
+  refunds               Refund[]
 
   @@index([organizationId, createdAt])
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+// First-class refund record (Revenue Foundation phase). Payment.status
+// (REFUNDED/PARTIALLY_REFUNDED) remains the summary flag on the payment
+// itself — this table is the structured source of truth for amount,
+// reason, and the approval/provider trail a refund actually needs. Never
+// remove/replace the existing Payment.status field; this is additive.
+model Refund {
+  id                String       @id @default(uuid())
+  paymentId         String
+  organizationId    String
+  amountInPaise     Int
+  reason            String
+  status            RefundStatus @default(REQUESTED)
+  requestedByUserId String
+  approvedByUserId  String?
+  providerRefundId  String?      @unique
+  providerResponse  Json?
+  failureReason     String?
+  // Client-supplied idempotency key (same convention as Audit/Pitch/Widget
+  // above): a retried "same request repeated" call with the same key
+  // returns the existing Refund row instead of creating a second one.
+  // Scoped per-org, matching the established @@unique([organizationId, idempotencyKey]) pattern.
+  idempotencyKey    String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  payment           Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy       User         @relation("RefundRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  approvedBy        User?        @relation("RefundApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([paymentId, status])
+  @@index([organizationId, createdAt])
+  @@index([status, createdAt])
 }
 
 model Invoice {

@@ -9,3 +9,8 @@ export * from './security-headers.js';
 export * from './tls.js';
 export * from './tracking-page.js';
 export * from './cart.js';
+export * from './consent.js';
+export * from './structured-data.js';
+export * from './structured-data-page.js';
+export * from './hreflang.js';
+export * from './hreflang-page.js';

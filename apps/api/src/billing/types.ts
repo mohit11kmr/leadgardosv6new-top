@@ -85,6 +85,24 @@ export interface RazorpayPayment {
   created_at: number;
 }
 
+export interface CreateRefundInput {
+  paymentId: string;
+  amountInPaise: number;
+  /** Client-supplied idempotency key so a retried call never creates two provider-side refunds. Razorpay accepts this via the request's Idempotency-Key header. */
+  idempotencyKey: string;
+  notes?: Record<string, string>;
+}
+
+export interface RazorpayRefund {
+  id: string;
+  entity: string;
+  amount: number;
+  currency: string;
+  payment_id: string;
+  status: string;
+  created_at: number;
+}
+
 export interface PaymentProvider {
   createOrder(input: CreateOrderInput): Promise<CreateOrderResult>;
   createSubscription(input: CreateSubscriptionInput): Promise<CreateSubscriptionResult>;
@@ -93,4 +111,5 @@ export interface PaymentProvider {
   verifyWebhookSignature(input: VerifyWebhookInput): boolean;
   fetchOrder(orderId: string): Promise<RazorpayOrder>;
   fetchPayment(paymentId: string): Promise<RazorpayPayment>;
+  refundPayment(input: CreateRefundInput): Promise<RazorpayRefund>;
 }

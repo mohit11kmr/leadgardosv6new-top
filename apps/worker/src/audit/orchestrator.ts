@@ -4,9 +4,11 @@ import {
   buildBusinessImpact,
   buildExecutiveSummary,
   calculateScores,
+  evaluateTrackingRuntime,
   scannerRegistry,
   type Finding,
   type PageRecord,
+  type TrackingRuntimeEvaluation,
 } from '@leadguard/shared';
 import {
   aggregateWebsiteSignals,
@@ -15,12 +17,26 @@ import {
   mergeRenderedSignals,
 } from './aggregation.js';
 import { BoundedCrawler } from './crawler.js';
+import {
+  evaluateConsentFindings,
+  evaluateDuplicateContentFindings,
+  evaluateHreflangReciprocity,
+} from './detectionIntelligenceP1.js';
 import { finalizeAudit } from './finalizer.js';
+import { fetchPage } from './fetcher.js';
 import { recordFailedPage, upsertAuditPage } from './persistence.js';
-import { fetchRenderedHtml } from './renderedFetch.js';
+import { fetchRenderedHtml, type RenderedPageResult } from './renderedFetch.js';
+import { fetchRobotsAndSitemap, isPathDisallowed } from './robotsSitemap.js';
 import { sendGuestScanReadyEmail } from './guestScanNotifier.js';
 import { AuditTelemetryTracker } from './telemetry.js';
 import type { AuditExecutionResult, CrawlOptions } from './types.js';
+
+// Grace buffer added on top of the per-run global timeout before a RUNNING
+// audit is considered orphaned (worker crashed mid-run, never reached
+// finalizeAudit) rather than genuinely still in flight. Must exceed the
+// timeout so a run that legitimately hits its own deadline and is finalizing
+// is never reclaimed out from under itself.
+const STALE_RUNNING_GRACE_MS = 30_000;
 
 export class AuditOrchestrator {
   async execute(auditId: string, signal: AbortSignal, options?: Partial<CrawlOptions>): Promise<AuditExecutionResult> {
@@ -42,25 +58,59 @@ export class AuditOrchestrator {
       },
     });
 
-    // 3. Claim the audit atomically (C8): refuses to run a CANCELLED/COMPLETED audit
+    const globalTimeoutMs = options?.globalTimeoutMs ?? Number(process.env.MAX_AUDIT_DURATION_MS ?? 60_000);
+
+    // 3. Claim the audit atomically. This distinguishes three cases per the
+    // audit idempotency contract (see docs/DETECTION_INTEGRITY.md):
+    //   - CANCELLED is permanently terminal — never reclaimable.
+    //   - RUNNING is reclaimable only once stale (startedAt older than the
+    //     global audit timeout + a grace buffer), i.e. a worker crashed
+    //     mid-run and never reached finalizeAudit. A genuinely fresh RUNNING
+    //     audit is NOT reclaimable — this is what actually blocks concurrent
+    //     duplicate execution. (The previous guard only excluded
+    //     CANCELLED/COMPLETED, so two concurrent deliveries of the same
+    //     un-deduped job — see guestScanService.ts/publicAuditService.ts,
+    //     which enqueue without a deterministic jobId — could both claim a
+    //     RUNNING audit and execute concurrently, corrupting shared state.)
+    //   - QUEUED, FAILED, PARTIAL, and COMPLETED are all reclaimable:
+    //     retrying a failed run and explicitly re-running a completed audit
+    //     are both legitimate (see tests/retry.test.ts) — the previous guard
+    //     incorrectly rejected re-running a COMPLETED audit at all.
+    const staleRunningBefore = new Date(Date.now() - globalTimeoutMs - STALE_RUNNING_GRACE_MS);
     const claimed = await db.audit.updateMany({
       where: {
         id: auditId,
-        status: { notIn: ['CANCELLED', 'COMPLETED'] },
+        status: { not: 'CANCELLED' },
+        OR: [{ status: { not: 'RUNNING' } }, { startedAt: { lt: staleRunningBefore } }],
       },
       data: {
         status: 'RUNNING',
-        startedAt: audit.startedAt ?? new Date(),
+        startedAt: new Date(),
         progressStage: 'discovery',
         progress: 5,
       },
     });
 
     if (claimed.count === 0) {
+      const reason = audit.status === 'CANCELLED' ? 'cancelled' : 'already_running';
+      console.log(
+        JSON.stringify({ level: 'info', service: 'worker', event: 'audit_claim_rejected', auditId, reason })
+      );
+      // This attempt's own AuditRun row (created above) never actually ran —
+      // close it out rather than leaving it stuck at RUNNING forever, so a
+      // rejected duplicate-delivery attempt doesn't masquerade as an
+      // in-progress execution in AuditRun history.
+      await db.auditRun.update({
+        where: { id: run.id },
+        data: { status: 'CANCELLED', errorCode: `CLAIM_REJECTED_${reason.toUpperCase()}`, completedAt: new Date() },
+      });
       throw new Error(`Audit cannot be started: current status is not eligible (status=${audit.status})`);
     }
 
-    const globalTimeoutMs = options?.globalTimeoutMs ?? Number(process.env.MAX_AUDIT_DURATION_MS ?? 60_000);
+    console.log(
+      JSON.stringify({ level: 'info', service: 'worker', event: 'audit_claim_accepted', auditId, runId: run.id })
+    );
+
     const timeoutController = new AbortController();
     const timeoutTimer = setTimeout(() => timeoutController.abort(), globalTimeoutMs);
 
@@ -74,6 +124,33 @@ export class AuditOrchestrator {
     const maxPages = options?.maxPages ?? Number(process.env.MAX_PAGES_PER_AUDIT ?? 10);
     const maxDepth = options?.maxDepth ?? Number(process.env.MAX_CRAWL_DEPTH ?? 2);
 
+    // 3b. robots.txt + sitemap.xml discovery — best-effort, non-fatal (most
+    // sites have neither, or one without the other). Feeds two things into
+    // the crawl: (1) robots.txt Disallow rules, honored via isUrlAllowed
+    // below so the crawler never fetches an explicitly-excluded path, and
+    // (2) sitemap-declared URLs, used after the main link-crawl to pick up
+    // pages a pure link-follow crawl wouldn't reach on its own (orphaned
+    // pages with no internal inbound link).
+    const origin = new URL(audit.website.normalizedUrl).origin;
+    const robotsSitemap = await fetchRobotsAndSitemap(origin, combinedSignal).catch(() => ({
+      disallowedPaths: [] as string[],
+      sitemapUrls: [] as string[],
+      robotsFetched: false,
+      sitemapFetched: false,
+    }));
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        service: 'worker',
+        event: 'robots_sitemap_discovery_completed',
+        auditId,
+        robotsFetched: robotsSitemap.robotsFetched,
+        sitemapFetched: robotsSitemap.sitemapFetched,
+        disallowedRuleCount: robotsSitemap.disallowedPaths.length,
+        sitemapUrlCount: robotsSitemap.sitemapUrls.length,
+      })
+    );
+
     const crawler = new BoundedCrawler({
       concurrencyLimit,
       maxPages,
@@ -82,6 +159,16 @@ export class AuditOrchestrator {
       globalTimeoutMs,
       maxResponseBytes: options?.maxResponseBytes ?? 2_000_000,
       countryMode: options?.countryMode ?? 'IN',
+      isUrlAllowed:
+        robotsSitemap.disallowedPaths.length > 0
+          ? (url: string) => {
+              try {
+                return !isPathDisallowed(new URL(url).pathname, robotsSitemap.disallowedPaths);
+              } catch {
+                return true;
+              }
+            }
+          : undefined,
     });
 
     telemetry.startStage('crawl');
@@ -131,6 +218,54 @@ export class AuditOrchestrator {
 
     const pages = Array.from(crawlResult.pages.values());
 
+    // 3c. Supplement with sitemap-only pages: pages the sitemap declares
+    // that the link-following crawl never reached (no internal inbound
+    // link pointed at them). Bounded conservatively (5 pages, remaining
+    // page budget, remaining time budget) — this is a small enhancement on
+    // top of an already-working crawl, not a second full crawl pass.
+    if (!signal.aborted && robotsSitemap.sitemapUrls.length > 0 && pages.length < maxPages) {
+      const alreadyCrawled = new Set(pages.map((p) => p.finalUrl || p.url));
+      const remainingBudget = Math.min(5, maxPages - pages.length);
+      const candidates = robotsSitemap.sitemapUrls
+        .filter((u) => {
+          try {
+            return new URL(u).origin === origin && !alreadyCrawled.has(u) && !isPathDisallowed(new URL(u).pathname, robotsSitemap.disallowedPaths);
+          } catch {
+            return false;
+          }
+        })
+        .slice(0, remainingBudget);
+
+      for (const sitemapUrl of candidates) {
+        try {
+          const supplementController = new AbortController();
+          const supplementTimer = setTimeout(() => supplementController.abort(), 8_000);
+          const page = await fetchPage(sitemapUrl, supplementController.signal, 0, undefined, 2_000_000);
+          clearTimeout(supplementTimer);
+          if (!alreadyCrawled.has(page.finalUrl)) {
+            pages.push(page);
+            alreadyCrawled.add(page.finalUrl);
+            await upsertAuditPage(auditId, page);
+          }
+        } catch {
+          // Best-effort — a sitemap entry that 404s or times out is simply skipped.
+        }
+      }
+
+      if (candidates.length > 0) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            service: 'worker',
+            event: 'sitemap_supplement_completed',
+            auditId,
+            attempted: candidates.length,
+            pagesAfterSupplement: pages.length,
+          })
+        );
+      }
+    }
+
     await db.audit.update({
       where: { id: auditId },
       data: {
@@ -162,15 +297,37 @@ export class AuditOrchestrator {
     // tracking/CTA signals only present after client-side JS execution
     // (SPA sites), merged in a way that can only remove false positives,
     // never suppress a real static-HTML finding (see mergeRenderedSignals).
+    // The same browser pass also captures outbound network requests during
+    // the visit, letting the tracking scanner distinguish "tag code present"
+    // from "tag actually fired a request" (see network-evidence.ts /
+    // docs/DETECTION_INTEGRITY.md) — this reuses the one existing Playwright
+    // launch rather than adding a second browser pass.
+    let trackingRuntime: TrackingRuntimeEvaluation | undefined;
     if (config.ENABLE_JS_RENDERED_RESCAN && pages.length > 0) {
       const homepage = pages.find((p) => p.depth === 0) ?? pages[0]!;
-      const renderedHtml = await fetchRenderedHtml(homepage.finalUrl || homepage.url, combinedSignal).catch(
-        () => null
+      const rendered = await fetchRenderedHtml(homepage.finalUrl || homepage.url, combinedSignal).catch(
+        (): RenderedPageResult => ({ html: null, networkEvidence: [], captureAttempted: false })
       );
-      if (renderedHtml) {
-        const renderedSignals = aggregateWebsiteSignals([{ ...homepage, html: renderedHtml }]);
+      if (rendered.html) {
+        const renderedSignals = aggregateWebsiteSignals([{ ...homepage, html: rendered.html }]);
         signals = mergeRenderedSignals(signals, renderedSignals);
       }
+      trackingRuntime = evaluateTrackingRuntime(rendered.networkEvidence, rendered.captureAttempted);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          service: 'worker',
+          event: 'network_capture_completed',
+          auditId,
+          captureAttempted: rendered.captureAttempted,
+          trackingEventsObserved: rendered.networkEvidence.length,
+          providerMatches: {
+            ga4: trackingRuntime.ga4.runtimeStatus,
+            gtm: trackingRuntime.gtm.runtimeStatus,
+            metaPixel: trackingRuntime.metaPixel.runtimeStatus,
+          },
+        })
+      );
     }
 
     const siteFindings = await evaluateWebsiteLevelScanners(
@@ -181,9 +338,18 @@ export class AuditOrchestrator {
         auditId,
         websiteUrl: audit.website.normalizedUrl,
         countryMode: options?.countryMode ?? 'IN',
-      }
+      },
+      trackingRuntime
     );
     allFindings.push(...siteFindings);
+
+    // 5b. Detection Intelligence P1: consent/CMP + consent-tracking
+    // correlation, cross-page hreflang reciprocity, duplicate-content —
+    // all website-scope, all reusing the pages/trackingRuntime already
+    // computed above (no extra crawl or browser pass).
+    allFindings.push(...evaluateConsentFindings(pages, signals, trackingRuntime, audit.website.normalizedUrl));
+    allFindings.push(...evaluateHreflangReciprocity(pages, audit.website.normalizedUrl));
+    allFindings.push(...evaluateDuplicateContentFindings(pages, audit.website.normalizedUrl));
 
     // 6. Deduplicate findings across scopes
     const findings = deduplicateFindings(allFindings);
