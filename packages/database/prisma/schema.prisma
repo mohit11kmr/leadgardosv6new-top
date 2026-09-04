@@ -166,6 +166,13 @@ model User {
   // specific capability. Empty for a non-admin user (irrelevant, since
   // platformAdmin=false already blocks them). See docs/REVENUE_FOUNDATION_IMPLEMENTATION.md.
   platformCapabilities    String[]                 @default([])
+  // Named convenience grant over the same capability system (Control Plane
+  // phase) — a role expands to a fixed capability set (see
+  // ROLE_CAPABILITIES in apps/api/src/middleware/rbac.ts) that is UNIONED
+  // with platformCapabilities at check time, never a replacement for it.
+  // Nullable: a platformAdmin user with no role falls back to whatever is
+  // explicitly in platformCapabilities, exactly as before this phase.
+  platformRole            PlatformRole?
   emailVerifiedAt         DateTime?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -782,6 +789,21 @@ enum RefundStatus {
   SUCCEEDED
   FAILED
   CANCELLED
+}
+
+// Internal/platform role (Control Plane phase) — a named bundle of
+// PlatformCapability values, never customer/org-facing RBAC (see
+// packages/database/prisma/schema.prisma's OrganizationMember.role for
+// that, unrelated model). Deliberately a short, fixed list matching this
+// phase's actual surfaces (revenue, customer 360, operations, security),
+// not a general-purpose role system — see docs/CONTROL_PLANE_IMPLEMENTATION.md.
+enum PlatformRole {
+  OWNER
+  FINANCE
+  OPERATIONS
+  SECURITY
+  SUPPORT
+  ANALYST
 }
 
 // First-class refund record (Revenue Foundation phase). Payment.status

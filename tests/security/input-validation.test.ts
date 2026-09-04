@@ -28,7 +28,7 @@ describe('Input validation: previously-unvalidated mutating routes', () => {
     token = createAccessToken(user.id, org.id);
 
     platformAdmin = await db.user.create({
-      data: { email: `platform-validation-${Date.now()}-${Math.random()}@example.com`, passwordHash: 'hash', platformAdmin: true },
+      data: { email: `platform-validation-${Date.now()}-${Math.random()}@example.com`, passwordHash: 'hash', platformAdmin: true, platformRole: 'OWNER' },
     });
     platformToken = createAccessToken(platformAdmin.id, org.id);
   });

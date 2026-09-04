@@ -2,9 +2,25 @@ import type { Request, Response, NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { getClientIp } from '@leadguard/shared';
+import { recordSecurityEvent } from '../auth.js';
 
 export const redisClient = new Redis(config.REDIS_URL);
 const isTest = process.env.NODE_ENV === 'test';
+
+/**
+ * Sustained rate-limit-abuse threshold (Control Plane phase, Phase 7): a
+ * single 429 is often just a legitimate client retrying too fast, not
+ * abuse — recording a SecurityEvent for every one would flood the table
+ * with routine, expected traffic. Only REPEATED violations by the same
+ * client against the same limiter, within a wider observation window, are
+ * a meaningful signal. Applies uniformly to every limiter built by
+ * createRedisRateLimiter (auth, api, webhook, etc.) — the event's
+ * `type` carries the limiter's own keyPrefix, so a security-event viewer
+ * can tell which limiter (e.g. RATE_LIMIT_ABUSE_WEBHOOK for webhook abuse)
+ * without a separate code path per limiter.
+ */
+const ABUSE_THRESHOLD = 5;
+const ABUSE_WINDOW_MULTIPLIER = 5;
 
 export function createRedisRateLimiter(options: {
   keyPrefix: string;
@@ -40,6 +56,28 @@ export function createRedisRateLimiter(options: {
       res.setHeader('X-RateLimit-Remaining', String(Math.max(0, effectiveLimit - count)));
 
       if (count > effectiveLimit) {
+        // Best-effort, never blocks the 429 response on failure.
+        void (async () => {
+          try {
+            const abuseKey = `ratelimit:abuse:${keyPrefix}:${clientKey}`;
+            const abuseCount = await redisClient.incr(abuseKey);
+            if (abuseCount === 1) {
+              await redisClient.pexpire(abuseKey, windowMs * ABUSE_WINDOW_MULTIPLIER);
+            }
+            if (abuseCount >= ABUSE_THRESHOLD) {
+              await redisClient.del(abuseKey); // reset — next event fires only after ABUSE_THRESHOLD more violations
+              await recordSecurityEvent(`RATE_LIMIT_ABUSE_${keyPrefix.toUpperCase()}`, null, getClientIp(req), {
+                keyPrefix,
+                violationCount: abuseCount,
+              });
+            }
+          } catch {
+            // Redis unavailable for the abuse counter specifically — the
+            // rate limit itself already failed safe above; this secondary
+            // signal is best-effort only.
+          }
+        })();
+
         return res.status(429).json({
           success: false,
           error: {

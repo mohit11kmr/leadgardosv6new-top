@@ -33,6 +33,10 @@ import { AdminDashboardView } from '../features/admin/AdminDashboardView.js';
 import { AdminUsersView } from '../features/admin/AdminUsersView.js';
 import { AdminOrgsView } from '../features/admin/AdminOrgsView.js';
 import { AdminAuditLogsView } from '../features/admin/AdminAuditLogsView.js';
+import { RevenueDashboardView } from '../features/admin/RevenueDashboardView.js';
+import { OperationsView } from '../features/admin/OperationsView.js';
+import { SecurityEventsView } from '../features/admin/SecurityEventsView.js';
+import { CustomerDetailView } from '../features/admin/CustomerDetailView.js';
 import { SettingsView } from '../features/settings/SettingsView.js';
 import { NotificationSettingsView } from '../features/settings/NotificationSettingsView.js';
 import { SecuritySettingsView } from '../features/settings/SecuritySettingsView.js';
@@ -310,6 +314,38 @@ export function App() {
           element={
             <RequirePlatformAdmin>
               <AdminAuditLogsView />
+            </RequirePlatformAdmin>
+          }
+        />
+        <Route
+          path="/admin/organizations/:id"
+          element={
+            <RequirePlatformAdmin>
+              <CustomerDetailView />
+            </RequirePlatformAdmin>
+          }
+        />
+        <Route
+          path="/admin/revenue"
+          element={
+            <RequirePlatformAdmin>
+              <RevenueDashboardView />
+            </RequirePlatformAdmin>
+          }
+        />
+        <Route
+          path="/admin/operations"
+          element={
+            <RequirePlatformAdmin>
+              <OperationsView />
+            </RequirePlatformAdmin>
+          }
+        />
+        <Route
+          path="/admin/security"
+          element={
+            <RequirePlatformAdmin>
+              <SecurityEventsView />
             </RequirePlatformAdmin>
           }
         />

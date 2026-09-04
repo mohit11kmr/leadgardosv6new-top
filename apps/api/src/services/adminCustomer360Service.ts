@@ -1,5 +1,7 @@
 import { db } from '@leadguard/database';
 import { revenueIntelligenceService, resolvePeriod } from './billing/revenueIntelligenceService.js';
+import { businessImpactTrendService, resolveTrendPeriod } from './businessImpactTrendService.js';
+import { customerHealthService } from './customerHealthService.js';
 
 const RECENT_LIMIT = 10;
 
@@ -17,7 +19,7 @@ const RECENT_LIMIT = 10;
  * never selected — only counts/labels are exposed for anything that could
  * carry a secret.
  */
-export async function getOrganizationDetail(organizationId: string) {
+export async function getOrganizationDetail(organizationId: string, options: { includeSecurity?: boolean } = {}) {
   const organization = await db.organization.findUnique({ where: { id: organizationId } });
   if (!organization) {
     const err = new Error('Organization not found');
@@ -26,12 +28,16 @@ export async function getOrganizationDetail(organizationId: string) {
   }
 
   const period = resolvePeriod('current_month');
+  const trendPeriod = resolveTrendPeriod({ days: 30 });
 
   const [
     members,
     subscription,
     revenue,
     refunds,
+    orgMrr,
+    businessImpactTrend,
+    health,
     websiteCount,
     auditCount,
     monitoringConfigCount,
@@ -67,6 +73,9 @@ export async function getOrganizationDetail(organizationId: string) {
       take: RECENT_LIMIT,
       select: { id: true, amountInPaise: true, status: true, reason: true, createdAt: true },
     }),
+    revenueIntelligenceService.getOrgMrr(organizationId),
+    businessImpactTrendService.getTrend(organizationId, { period: trendPeriod }),
+    customerHealthService.computeHealth(organizationId),
     db.website.count({ where: { organizationId } }),
     db.audit.count({ where: { organizationId } }),
     db.monitoringConfig.count({ where: { organizationId, enabled: true } }),
@@ -75,13 +84,17 @@ export async function getOrganizationDetail(organizationId: string) {
     db.clientWorkspace.count({ where: { organizationId } }),
     db.prospect.count({ where: { organizationId } }),
     db.pitch.count({ where: { organizationId } }),
-    db.securityEvent.count({ where: { user: { memberships: { some: { organizationId } } } } }),
-    db.securityEvent.findMany({
-      where: { user: { memberships: { some: { organizationId } } } },
-      orderBy: { createdAt: 'desc' },
-      take: RECENT_LIMIT,
-      select: { id: true, type: true, createdAt: true, ipAddress: true }, // never `metadata` — may carry more than intended
-    }),
+    options.includeSecurity
+      ? db.securityEvent.count({ where: { user: { memberships: { some: { organizationId } } } } })
+      : Promise.resolve(0),
+    options.includeSecurity
+      ? db.securityEvent.findMany({
+          where: { user: { memberships: { some: { organizationId } } } },
+          orderBy: { createdAt: 'desc' },
+          take: RECENT_LIMIT,
+          select: { id: true, type: true, createdAt: true, ipAddress: true }, // never `metadata` — may carry more than intended
+        })
+      : Promise.resolve([]),
     db.funnelEvent.findMany({
       where: { organizationId },
       orderBy: { createdAt: 'desc' },
@@ -134,6 +147,11 @@ export async function getOrganizationDetail(organizationId: string) {
       : null,
     revenue: {
       period: period.label,
+      // MRR/ARR come from the Subscription+Plan layer, never from Payment —
+      // same source-of-truth rule as the company-wide revenue summary (see
+      // revenueIntelligenceService.ts's own header comment).
+      currentMrr: orgMrr,
+      currentArr: { amountInPaise: orgMrr.amountInPaise * 12 },
       collectedRevenue: revenue.collectedRevenue,
       failedPaymentAmount: revenue.failedPaymentAmount,
       recentRefunds: refunds,
@@ -145,14 +163,18 @@ export async function getOrganizationDetail(organizationId: string) {
       openFindings: openFindingsCount,
       reports: reportCount,
     },
+    businessImpactTrend,
+    health,
     agency:
       clientWorkspaceCount > 0 || prospectCount > 0
         ? { clientWorkspaces: clientWorkspaceCount, prospects: prospectCount, pitches: pitchCount }
         : null,
-    security: {
-      totalEventCount: securityEventCount,
-      recentEvents: recentSecurityEvents,
-    },
+    // Only populated when the caller also holds SECURITY_VIEW (checked by
+    // the route, not here — see routes.ts) — CUSTOMER_360_VIEW alone is not
+    // sufficient to see security events, per Phase 3's explicit instruction.
+    security: options.includeSecurity
+      ? { totalEventCount: securityEventCount, recentEvents: recentSecurityEvents }
+      : { status: 'RESTRICTED', reason: 'Viewing security events requires the SECURITY_VIEW capability in addition to CUSTOMER_360_VIEW.' },
     activity: {
       recentFunnelEvents,
       recentAdminActions: recentAdminActions, // see note below

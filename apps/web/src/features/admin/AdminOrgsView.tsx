@@ -108,6 +108,9 @@ export function AdminOrgsView() {
                   <td>{org.auditsCount}</td>
                   <td>{new Date(org.createdAt).toLocaleDateString()}</td>
                   <td>
+                    <Link to={`/admin/organizations/${org.id}`} className="btn btn-sm btn-secondary" style={{ marginRight: '0.5rem' }}>
+                      View 360
+                    </Link>
                     <button
                       className={`btn btn-sm ${org.isSuspended ? 'btn-primary' : 'btn-danger'}`}
                       onClick={() =>

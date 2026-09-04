@@ -3,12 +3,20 @@ export function toUserDto(user: {
   email: string;
   emailVerifiedAt?: Date | null;
   platformAdmin?: boolean;
+  platformCapabilities?: string[];
+  platformRole?: string | null;
 }) {
   return {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.emailVerifiedAt),
     platformAdmin: Boolean(user.platformAdmin),
+    // UI convenience only, exactly like platformAdmin above — every admin
+    // route/mutation is still authorized server-side by
+    // requirePlatformCapability(), never by trusting this client-visible
+    // field (see rbac.ts).
+    platformCapabilities: user.platformCapabilities ?? [],
+    platformRole: user.platformRole ?? null,
   };
 }
 

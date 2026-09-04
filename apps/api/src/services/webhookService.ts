@@ -5,6 +5,7 @@ import { encryptSecret } from '@leadguard/shared/dist/server-only/secret-encrypt
 import { outboxService, webhookQueue } from './outboxService.js';
 import { randomUUID } from 'node:crypto';
 import { config } from '@leadguard/config';
+import { recordSecurityEvent } from '../auth.js';
 
 export class WebhookService {
   /**
@@ -62,9 +63,24 @@ export class WebhookService {
       url: string;
       events: string[];
       description?: string;
-    }
+    },
+    actor?: { userId?: string | null; ipAddress?: string | null }
   ) {
-    await validateExternalUrl(data.url);
+    try {
+      await validateExternalUrl(data.url);
+    } catch (err) {
+      // SSRF signal (Control Plane phase, Phase 7): a webhook URL is the
+      // clearest genuine SSRF vector in this codebase (the worker fetches
+      // it server-side on every delivery) — recorded only here, not on
+      // every public-facing URL validation, to avoid flooding SecurityEvent
+      // with routine invalid-input noise from unauthenticated paths.
+      await recordSecurityEvent('SSRF_BLOCKED', actor?.userId ?? null, actor?.ipAddress ?? null, {
+        context: 'webhook_endpoint',
+        organizationId,
+        reason: err instanceof Error ? err.message : 'Unknown error',
+      });
+      throw err;
+    }
     const rawSecret = `whsec_${randomBytes(24).toString('hex')}`;
 
     const endpoint = await db.webhookEndpoint.create({

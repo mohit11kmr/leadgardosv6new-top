@@ -544,3 +544,25 @@ A focused "revenue foundation" phase — implement the four §27 P0 items (MRR/A
 **Business Correctness verdict**: the business can now state its own current MRR/ARR and per-period New/Churned MRR from a real API, backed by tests proving the exact invariants this document worried about (double-counting, cross-tenant leakage, cumulative refund overrun). Expansion/Contraction MRR remain honestly unanswerable rather than fabricated.
 
 **Production Readiness, updated**: see the final "REVENUE FOUNDATION IMPLEMENTATION RESULT" report for the authoritative verdict — this section is a status index, not a re-judgment.
+
+---
+
+## 29. Control Plane Implementation Outcome
+
+**Date:** 2026-09-04. The "Internal Control Plane + Customer 360 + ROI Intelligence" phase implemented the operating layer around Revenue Foundation's data layer. Full detail in `docs/CONTROL_PLANE_IMPLEMENTATION.md`.
+
+| §24 finding / this document's own recommendation | Outcome | Where |
+|---|---|---|
+| Internal RBAC (multi-role, not just `platformAdmin`) | **RESOLVED** | `PlatformRole` enum + role/capability union, `GET`/`PATCH /admin/platform-roles` |
+| Customer health score (v1, computed-on-read) | **RESOLVED** | `customerHealthService.ts` — explainable, explicitly provisional thresholds |
+| Business-impact-to-ROI trend (§12, this document's own "strongest potential moat") | **RESOLVED** | `businessImpactTrendService.ts`, wired into Customer 360 |
+| Extending `FunnelEventService` to the core organization lifecycle (§24, P1) | **RESOLVED, with one architecture correction** | Core vocabulary added to both `apps/api`/`apps/worker` (necessarily duplicated, not shared via `packages/shared` — see implementation doc §6) |
+| Admin `SecurityEvent` viewer + SSRF/rate-limit wiring (§24, P1) | **RESOLVED** | `GET /admin/security-events`; SSRF-block + rate-limit-abuse signals added |
+| Customer 360 admin UI (§22, explicitly deferred by Revenue Foundation) | **RESOLVED** | `CustomerDetailView.tsx`, all required panels, capability-gated security panel |
+| Agency client-health/conversion-rate view (§24, P1) | **PARTIAL** — the existing agency counts (workspaces/prospects/pitches) are now shown in Customer 360; no dedicated conversion-rate rollup view was built | Not a dedicated view |
+| Full health-score UI with historical trend | **DEFERRED** — v1 is explicitly "not available" for trend, not fabricated | Future phase, once real usage data exists to calibrate |
+| Coupon/discount engine, `apps/admin` extraction, per-client agency billing | **NOT NEEDED this phase** — explicitly out of scope, unchanged from Revenue Foundation's own deferral | Not started |
+
+**Business Correctness verdict**: an operator can now inspect any customer (health, revenue, ROI trend, activity, security) without database access, and every number traces to a real calculation with a stated semantic (never a fabricated "revenue recovered" claim, never a silent zero standing in for missing data).
+
+**Production Readiness, updated**: see the final "CONTROL PLANE IMPLEMENTATION RESULT" report for the authoritative verdict.

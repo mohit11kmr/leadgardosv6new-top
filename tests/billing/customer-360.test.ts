@@ -77,8 +77,27 @@ describe('GET /admin/organizations/:id — Customer 360', () => {
     expect(data.users.count).toBe(1);
     expect(data.productUsage.websites).toBe(1);
     expect(data.productUsage.audits).toBe(1);
-    expect(Array.isArray(data.security.recentEvents)).toBe(true);
+    // CUSTOMER_360_VIEW alone (this fixture's default) does not include
+    // SECURITY_VIEW — the security panel must be restricted, not populated
+    // (see the dedicated SECURITY_VIEW gating test below).
+    expect(data.security.status).toBe('RESTRICTED');
     expect(Array.isArray(data.activity.recentFunnelEvents)).toBe(true);
+    expect(data.health).toBeDefined();
+    expect(data.health.band).toBeDefined();
+    expect(data.businessImpactTrend).toBeDefined();
+    expect(data.revenue.currentMrr).toBeDefined();
+    expect(data.revenue.currentArr).toBeDefined();
+  });
+
+  it('only shows the security panel to a caller who also holds SECURITY_VIEW', async () => {
+    const { token } = await makePlatformAdmin(['CUSTOMER_360_VIEW', 'SECURITY_VIEW']);
+    const { org } = await makeTargetOrg('SecurityPanel');
+
+    const res = await request(app).get(`/api/v1/admin/organizations/${org.id}`).set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.security.status).toBeUndefined();
+    expect(Array.isArray(res.body.data.security.recentEvents)).toBe(true);
+    expect(typeof res.body.data.security.totalEventCount).toBe('number');
   });
 
   it('never exposes a passwordHash, tokenHash, or keyHash anywhere in the response', async () => {

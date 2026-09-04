@@ -28,6 +28,7 @@ import { recordFailedPage, upsertAuditPage } from './persistence.js';
 import { fetchRenderedHtml, type RenderedPageResult } from './renderedFetch.js';
 import { fetchRobotsAndSitemap, isPathDisallowed } from './robotsSitemap.js';
 import { sendGuestScanReadyEmail } from './guestScanNotifier.js';
+import { funnelEventService, FUNNEL_EVENTS } from './funnelEventService.js';
 import { AuditTelemetryTracker } from './telemetry.js';
 import type { AuditExecutionResult, CrawlOptions } from './types.js';
 
@@ -110,6 +111,16 @@ export class AuditOrchestrator {
     console.log(
       JSON.stringify({ level: 'info', service: 'worker', event: 'audit_claim_accepted', auditId, runId: run.id })
     );
+    // Emitted only once, right after this call actually wins the atomic
+    // claim above — a rejected duplicate-delivery attempt (claimed.count===0)
+    // never reaches this line, so AUDIT_STARTED cannot be double-recorded
+    // for the same real execution.
+    void funnelEventService.record({
+      organizationId: audit.organizationId,
+      websiteId: audit.websiteId,
+      auditId: audit.id,
+      type: FUNNEL_EVENTS.AUDIT_STARTED,
+    });
 
     const timeoutController = new AbortController();
     const timeoutTimer = setTimeout(() => timeoutController.abort(), globalTimeoutMs);
@@ -402,6 +413,67 @@ export class AuditOrchestrator {
       startedAt,
     });
     telemetry.endStage('finalization', 'finalizationDurationMs');
+
+    if (status === 'COMPLETED' || status === 'PARTIAL') {
+      void funnelEventService.record({
+        organizationId: audit.organizationId,
+        websiteId: audit.websiteId,
+        auditId: audit.id,
+        type: FUNNEL_EVENTS.AUDIT_COMPLETED,
+        data: { status, overallScore: scores.overall, findingsCount: findings.length },
+      });
+
+      // FINDING_OPENED/FINDING_RESOLVED: one aggregate event per audit (not
+      // one per finding — AuditFinding has no resolvedAt column, and a
+      // per-finding event here would flood FunnelEvent on a large diff), by
+      // comparing this audit's normalizedIssueKey set against the most
+      // recent PRIOR completed/partial audit for the same website. Skipped
+      // entirely when there is no prior audit to compare against — the
+      // first-ever audit for a website has nothing to be "new" or
+      // "resolved" relative to, and reporting 0/0 there would imply a
+      // comparison that didn't actually happen.
+      const previousAudit = await db.audit.findFirst({
+        where: {
+          websiteId: audit.websiteId,
+          id: { not: audit.id },
+          status: { in: ['COMPLETED', 'PARTIAL'] },
+          createdAt: { lt: audit.createdAt },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+
+      if (previousAudit) {
+        const previousFindings = await db.auditFinding.findMany({
+          where: { auditId: previousAudit.id },
+          select: { normalizedIssueKey: true, internalKey: true, ruleId: true },
+        });
+        const previousKeys = new Set(previousFindings.map((f) => f.normalizedIssueKey ?? f.internalKey ?? f.ruleId));
+        const currentKeys = new Set(findings.map((f) => f.normalizedIssueKey ?? f.internalKey ?? f.ruleId));
+
+        const openedKeys = [...currentKeys].filter((k) => !previousKeys.has(k));
+        const resolvedKeys = [...previousKeys].filter((k) => !currentKeys.has(k));
+
+        if (openedKeys.length > 0) {
+          void funnelEventService.record({
+            organizationId: audit.organizationId,
+            websiteId: audit.websiteId,
+            auditId: audit.id,
+            type: FUNNEL_EVENTS.FINDING_OPENED,
+            data: { count: openedKeys.length, comparedToAuditId: previousAudit.id },
+          });
+        }
+        if (resolvedKeys.length > 0) {
+          void funnelEventService.record({
+            organizationId: audit.organizationId,
+            websiteId: audit.websiteId,
+            auditId: audit.id,
+            type: FUNNEL_EVENTS.FINDING_RESOLVED,
+            data: { count: resolvedKeys.length, comparedToAuditId: previousAudit.id },
+          });
+        }
+      }
+    }
 
     // Guest-flow "your scan is ready" email — only ever fires when the
     // public/free-scan submission captured an email (guestEmail is never

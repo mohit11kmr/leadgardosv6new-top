@@ -3,6 +3,7 @@ import type { Refund } from '@prisma/client';
 import { razorpayProvider } from '../../billing/razorpayProvider.js';
 import { verifyPassword } from '../../auth.js';
 import { adminService } from '../adminService.js';
+import { funnelEventService, FUNNEL_EVENTS } from '../funnelEventService.js';
 
 /**
  * First-class refund domain (Revenue Foundation phase). Payment.status
@@ -191,6 +192,11 @@ export class RefundService {
       console.log(
         JSON.stringify({ level: 'info', service: 'api', event: 'refund_provider_succeeded', refundId: updated.id, providerRefundId: providerResult.id })
       );
+      void funnelEventService.record({
+        organizationId: input.organizationId,
+        type: FUNNEL_EVENTS.REFUND_SUCCEEDED,
+        data: { refundId: updated.id, amountInPaise: input.amountInPaise },
+      });
       await adminService.recordAdminAction(input.requestedByUserId, 'REFUND_SUCCEEDED', 'REFUND', updated.id, {
         paymentId: input.paymentId,
         amountInPaise: input.amountInPaise,

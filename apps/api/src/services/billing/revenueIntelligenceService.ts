@@ -154,6 +154,28 @@ export class RevenueIntelligenceService {
   }
 
   /**
+   * Current MRR for one specific organization (Control Plane phase) — same
+   * semantics as getCurrentMrr (single most-recent ACTIVE subscription,
+   * normalized to monthly), scoped to one org for the Customer 360 revenue
+   * panel. Not derived from getCurrentMrr's aggregate rows, since those
+   * don't retain per-org identity after the SUM.
+   */
+  async getOrgMrr(organizationId: string): Promise<MrrResult> {
+    const rows = await db.$queryRaw<Array<{ priceInPaise: number; billingInterval: string }>>`
+      SELECT DISTINCT ON (s."organizationId") p."priceInPaise", p."billingInterval"
+      FROM "Subscription" s
+      JOIN "Plan" p ON p.id = s."planId"
+      WHERE s.status = 'ACTIVE' AND s."organizationId" = ${organizationId}
+      ORDER BY s."organizationId", s."createdAt" DESC
+    `;
+    let amountInPaise = 0;
+    for (const row of rows) {
+      amountInPaise += monthlyEquivalentPaise(row.priceInPaise, row.billingInterval);
+    }
+    return { amountInPaise, organizationCount: rows.length };
+  }
+
+  /**
    * New MRR: subscriptions whose createdAt falls inside the period AND
    * whose CURRENT status is ACTIVE or TRIALING — i.e., subscriptions that
    * started in this period and are still contributing to current recurring

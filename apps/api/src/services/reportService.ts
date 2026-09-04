@@ -6,6 +6,7 @@ import { config } from '@leadguard/config';
 import { getStorageProvider, extractStorageFilename } from '@leadguard/shared/dist/server-only/report-storage.js';
 import { whiteLabelService } from './agency/whiteLabelService.js';
 import { outboxService } from './outboxService.js';
+import { funnelEventService, FUNNEL_EVENTS } from './funnelEventService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -263,6 +264,8 @@ export class ReportService {
       },
     });
 
+    void funnelEventService.record({ organizationId, auditId: audit.id, type: FUNNEL_EVENTS.REPORT_GENERATED, data: { reportId: report.id } });
+
     // Emit outbox domain event
     await outboxService.emitEvent(
       organizationId,
@@ -396,6 +399,8 @@ export class ReportService {
       },
       include: { shareLinks: true },
     });
+
+    void funnelEventService.record({ organizationId, type: FUNNEL_EVENTS.REPORT_GENERATED, data: { reportId: report.id, vaultRunId: run.id } });
 
     await outboxService.emitEvent(organizationId, 'VAULT_REPORT_READY', 'VAULT_REPORT', report.id, {
       reportId: report.id,

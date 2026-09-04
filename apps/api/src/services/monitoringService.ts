@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { entitlementService } from './entitlementService.js';
 import { monitoringQueue } from '../queue.js';
+import { funnelEventService, FUNNEL_EVENTS } from './funnelEventService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -121,6 +122,13 @@ export class MonitoringService {
         archivedAt: null,
       },
       include: { website: true },
+    });
+
+    void funnelEventService.record({
+      organizationId,
+      websiteId: input.websiteId,
+      type: FUNNEL_EVENTS.MONITORING_STARTED,
+      data: { monitoringConfigId: monitoringConfig.id, frequency: reqFrequency },
     });
 
     // 7. Enqueue initial immediate monitoring execution

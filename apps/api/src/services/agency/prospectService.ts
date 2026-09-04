@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { config } from '@leadguard/config';
 import { validateExternalUrl, normalizeUrl } from '@leadguard/shared';
 import { entitlementService } from '../entitlementService.js';
+import { funnelEventService, FUNNEL_EVENTS } from '../funnelEventService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 export const prospectQueue = new Queue('agency-prospect', {
@@ -316,6 +317,15 @@ export class ProspectService {
       await db.prospect.createMany({
         data: validProspects,
         skipDuplicates: true,
+      });
+      // One aggregate event per batch (not one per prospect) — createMany
+      // doesn't return per-row identity, and a bulk-imported campaign can
+      // create hundreds of prospects at once, so per-row events here would
+      // flood the FunnelEvent table for a single logical action.
+      void funnelEventService.record({
+        organizationId,
+        type: FUNNEL_EVENTS.PROSPECT_CREATED,
+        data: { campaignId: campaign.id, count: validProspects.length },
       });
     }
 

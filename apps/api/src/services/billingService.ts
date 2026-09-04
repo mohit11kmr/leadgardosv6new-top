@@ -545,6 +545,7 @@ export class BillingService {
         },
       }),
     ]);
+    void funnelEventService.record({ organizationId, type: FUNNEL_EVENTS.SUBSCRIPTION_CANCELLED, data: { subscriptionId: activeSub.id } });
     return updated;
   }
 
@@ -1307,6 +1308,31 @@ export class BillingService {
               data: { subscriptionId: subscription.id },
             },
           });
+          void funnelEventService.record({ organizationId, type: FUNNEL_EVENTS.SUBSCRIPTION_STARTED, data: { subscriptionId: subscription.id } });
+        } else if (!subscription) {
+          // Control Plane phase addition: subscription.charged also fires
+          // on every RECURRING renewal charge, not just first activation —
+          // the branch above only matches a CREATED-status row, so a
+          // renewal charge against an already-ACTIVE subscription
+          // previously fell through and did nothing but record the raw
+          // BillingEvent. This extends currentPeriodEnd (previously never
+          // updated on renewal at all) and records the renewal, additive
+          // only — it does not touch the CREATED->ACTIVE activation path
+          // above.
+          const activeSubscription = await tx.subscription.findFirst({
+            where: { organizationId, providerSubscriptionId, status: 'ACTIVE' },
+          });
+          if (activeSubscription) {
+            await tx.subscription.update({
+              where: { id: activeSubscription.id },
+              data: { currentPeriodStart: new Date(), currentPeriodEnd: new Date(Date.now() + 30 * 86400000) },
+            });
+            void funnelEventService.record({
+              organizationId,
+              type: FUNNEL_EVENTS.SUBSCRIPTION_RENEWED,
+              data: { subscriptionId: activeSubscription.id },
+            });
+          }
         }
       }
     }
@@ -1362,6 +1388,18 @@ export class BillingService {
             where: { id: existingPayment.id },
             data: { status: 'CAPTURED' },
           });
+          // Guarded to non-Express-Fix payments only: the guest Express Fix
+          // flow already emits its own FUNNEL_EVENTS.PAYMENT_SUCCESS from
+          // its synchronous checkout-verification path — emitting here too
+          // would double-record the same real payment under two event
+          // types.
+          if (paymentNotes.purpose !== 'EXPRESS_FIX') {
+            void funnelEventService.record({
+              organizationId,
+              type: FUNNEL_EVENTS.PAYMENT_SUCCEEDED,
+              data: { paymentId: existingPayment.id, amountInPaise: paymentAmount },
+            });
+          }
         }
 
         // Handle Express Fix fulfillment
@@ -1415,6 +1453,17 @@ export class BillingService {
             where: { id: existingPayment.id },
             data: { status: 'FAILED' },
           });
+          // Guarded to non-Express-Fix payments only — guestExpressFixController.ts
+          // already emits PAYMENT_FAILED from its own synchronous
+          // verification path; this webhook path would otherwise
+          // double-record the same failed payment.
+          if (paymentNotes.purpose !== 'EXPRESS_FIX') {
+            void funnelEventService.record({
+              organizationId,
+              type: FUNNEL_EVENTS.PAYMENT_FAILED,
+              data: { paymentId: existingPayment.id, errorCode, errorDescription },
+            });
+          }
         }
 
         // Handle Express Fix fulfillment

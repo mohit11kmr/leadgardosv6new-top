@@ -20,6 +20,8 @@ export interface CurrentUser {
   email: string;
   emailVerified: boolean;
   platformAdmin: boolean;
+  platformCapabilities?: string[];
+  platformRole?: string | null;
 }
 
 export interface MeResult {

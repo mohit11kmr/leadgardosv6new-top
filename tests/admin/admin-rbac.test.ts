@@ -14,8 +14,17 @@ describe('Admin Platform & RBAC Security Controls (LG-034)', () => {
   let regularToken: string;
 
   beforeEach(async () => {
+    // platformRole: 'OWNER' matches this suite's own scenarios (a full
+    // platform admin succeeding at every admin route) and matches how
+    // real, pre-existing platformAdmin=true users were backfilled by the
+    // Control Plane phase's migration — see docs/CONTROL_PLANE_IMPLEMENTATION.md.
+    // Routes now declare specific PlatformCapability requirements on top of
+    // platformAdmin=true (PLATFORM_VIEW, CUSTOMER_MANAGE, etc.); a bare
+    // platformAdmin=true with no role/capabilities would now be correctly
+    // rejected by those routes, which is exactly this phase's intended
+    // tightening, not a regression to work around here.
     platformAdmin = await db.user.create({
-      data: { email: `platform-${Date.now()}-${Math.random()}@example.com`, passwordHash: 'hash', platformAdmin: true },
+      data: { email: `platform-${Date.now()}-${Math.random()}@example.com`, passwordHash: 'hash', platformAdmin: true, platformRole: 'OWNER' },
     });
     ownerUser = await db.user.create({
       data: { email: `owner-${Date.now()}-${Math.random()}@example.com`, passwordHash: 'hash' },

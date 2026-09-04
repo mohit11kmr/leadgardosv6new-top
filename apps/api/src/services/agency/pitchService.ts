@@ -9,6 +9,7 @@ import {
   type RawPitchOutput,
 } from '@leadguard/shared';
 import { entitlementService } from '../entitlementService.js';
+import { funnelEventService, FUNNEL_EVENTS } from '../funnelEventService.js';
 
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 export const pitchQueue = new Queue('agency-pitch', {
@@ -554,6 +555,17 @@ export class PitchService {
       if (!pitch) {
         throw serializeError ?? new Error('Pitch serialization failed');
       }
+
+      // Named PITCH_SENT per the phase's vocabulary, though this fires at
+      // generation-completion time, not a separate dispatch step — this
+      // codebase has no distinct "email actually sent to prospect" tracking
+      // beyond pitch generation itself (documented in
+      // docs/CONTROL_PLANE_IMPLEMENTATION.md rather than left implicit).
+      void funnelEventService.record({
+        organizationId,
+        type: FUNNEL_EVENTS.PITCH_SENT,
+        data: { pitchId: pitch.id, prospectId },
+      });
 
       return { status: 'COMPLETED', pitchId: pitch!.id };
     } catch (err: any) {

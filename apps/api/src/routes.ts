@@ -48,6 +48,13 @@ import { prospectQueue } from './services/agency/prospectService.js';
 import { pitchQueue } from './services/agency/pitchService.js';
 import { settingsService } from './services/settingsService.js';
 import { testimonialService } from './services/testimonialService.js';
+import { platformRoleService, PlatformRoleValidationError } from './services/platformRoleService.js';
+import { adminSecurityEventService } from './services/adminSecurityEventService.js';
+import { getOperationsSummary } from './services/operationsSummaryService.js';
+import { businessImpactTrendService, resolveTrendPeriod } from './services/businessImpactTrendService.js';
+import { customerHealthService } from './services/customerHealthService.js';
+import { getEffectivePlatformCapabilities, type PlatformCapability, type PlatformRole } from './middleware/rbac.js';
+import { funnelEventService, FUNNEL_EVENTS } from './services/funnelEventService.js';
 import { webhookService } from './services/webhookService.js';
 import { blogService } from './services/blogService.js';
 import { platformStatsService } from './services/public/platformStatsService.js';
@@ -492,6 +499,8 @@ apiRouter.post('/auth/register', authLimiter, async (request, response, next) =>
         members: { create: { userId: user.id, role: 'OWNER' } },
       },
     });
+    void funnelEventService.record({ organizationId: organization.id, type: FUNNEL_EVENTS.USER_SIGNED_UP, data: { userId: user.id } });
+    void funnelEventService.record({ organizationId: organization.id, type: FUNNEL_EVENTS.ORGANIZATION_CREATED });
 
     const refreshToken = createRefreshToken();
     const clientIp = getClientIp(request);
@@ -1253,7 +1262,17 @@ apiRouter.post('/websites', requirePermission('WEBSITE_MANAGE'), async (request:
     }
 
     const input = websiteSchema.parse(request.body);
-    const url = await validateExternalUrl(input.url);
+    let url: URL;
+    try {
+      url = await validateExternalUrl(input.url);
+    } catch (err) {
+      await recordSecurityEvent('SSRF_BLOCKED', request.auth!.sub, getClientIp(request), {
+        context: 'website_create',
+        organizationId: request.auth!.organizationId,
+        reason: err instanceof Error ? err.message : 'Unknown error',
+      });
+      throw err;
+    }
     const normalizedUrl = url.toString().replace(/\/$/, '');
     const organizationId = request.auth!.organizationId;
 
@@ -1281,7 +1300,10 @@ apiRouter.post('/websites', requirePermission('WEBSITE_MANAGE'), async (request:
 
     await entitlementService.recordUsage(organizationId, 'WEBSITES');
     response.status(201).json({ success: true, data: toWebsiteDto(website) });
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message && (error.message.includes('Only credential-free') || error.message.includes('Private or metadata') || error.message.includes('Host resolves to a private address') || error.message.includes('Invalid URL'))) {
+      return response.status(400).json({ success: false, error: { code: 'INVALID_URL', message: error.message } });
+    }
     next(error);
   }
 });
@@ -1331,7 +1353,17 @@ apiRouter.delete('/websites/:id', requirePermission('WEBSITE_MANAGE'), async (re
 apiRouter.patch('/websites/:id', requirePermission('WEBSITE_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
     const input = z.object({ name: z.string().min(1).max(100), url: z.string().url() }).parse(request.body);
-    const url = await validateExternalUrl(input.url);
+    let url: URL;
+    try {
+      url = await validateExternalUrl(input.url);
+    } catch (err) {
+      await recordSecurityEvent('SSRF_BLOCKED', request.auth!.sub, getClientIp(request), {
+        context: 'website_update',
+        organizationId: request.auth!.organizationId,
+        reason: err instanceof Error ? err.message : 'Unknown error',
+      });
+      throw err;
+    }
     const result = await db.website.updateMany({
       where: { id: String(request.params.id), organizationId: request.auth!.organizationId, deletedAt: null },
       data: {
@@ -1351,7 +1383,10 @@ apiRouter.patch('/websites/:id', requirePermission('WEBSITE_MANAGE'), async (req
       where: { id: String(request.params.id), organizationId: request.auth!.organizationId },
     });
     response.json({ success: true, data: website ? toWebsiteDto(website) : null });
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message && (error.message.includes('Only credential-free') || error.message.includes('Private or metadata') || error.message.includes('Host resolves to a private address') || error.message.includes('Invalid URL'))) {
+      return response.status(400).json({ success: false, error: { code: 'INVALID_URL', message: error.message } });
+    }
     next(error);
   }
 });
@@ -2825,11 +2860,11 @@ apiRouter.get('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: 
 apiRouter.post('/webhooks', requirePermission('WEBHOOK_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
     const { url, events, description } = createWebhookBodySchema.parse(request.body);
-    const result = await webhookService.createEndpoint(request.auth!.organizationId, {
-      url,
-      events: events || ['*'],
-      description,
-    });
+    const result = await webhookService.createEndpoint(
+      request.auth!.organizationId,
+      { url, events: events || ['*'], description },
+      { userId: request.auth!.sub, ipAddress: getClientIp(request) }
+    );
     response.status(201).json({ success: true, data: result });
   } catch (error: any) {
     if (error.message && (error.message.includes('Only credential-free') || error.message.includes('Private or metadata') || error.message.includes('Host resolves to a private address') || error.message.includes('Invalid URL'))) {
@@ -2861,7 +2896,7 @@ apiRouter.post('/webhooks/:id/ping', requirePermission('WEBHOOK_MANAGE'), async 
 // PHASE 8: ADMIN PLATFORM
 // ==========================================
 
-apiRouter.get('/admin/metrics', requirePlatformAdmin(), async (_request: AuthRequest, response, next) => {
+apiRouter.get('/admin/metrics', requirePlatformAdmin(), requirePlatformCapability('PLATFORM_VIEW'), async (_request: AuthRequest, response, next) => {
   try {
     const metrics = await adminService.getAdminMetrics();
     response.json({ success: true, data: metrics });
@@ -2917,7 +2952,7 @@ apiRouter.post('/admin/users/:id/revoke-sessions', requirePlatformAdmin(), async
   }
 });
 
-apiRouter.get('/admin/organizations', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/organizations', requirePlatformAdmin(), requirePlatformCapability('CUSTOMER_VIEW'), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
@@ -2941,7 +2976,17 @@ apiRouter.get(
   requirePlatformCapability('CUSTOMER_360_VIEW'),
   async (request: AuthRequest, response, next) => {
     try {
-      const detail = await getOrganizationDetail(request.params.id);
+      // Security panel is a stricter sub-gate within Customer 360 (Control
+      // Plane phase, Phase 3): only a caller who ALSO holds SECURITY_VIEW
+      // sees SecurityEvent data, even though CUSTOMER_360_VIEW alone is
+      // enough to reach this route at all.
+      const caller = await db.user.findUnique({
+        where: { id: request.auth!.sub },
+        select: { platformCapabilities: true, platformRole: true },
+      });
+      const canViewSecurity = caller ? getEffectivePlatformCapabilities(caller).has('SECURITY_VIEW') : false;
+
+      const detail = await getOrganizationDetail(request.params.id, { includeSecurity: canViewSecurity });
       console.log(
         JSON.stringify({
           level: 'info',
@@ -2961,7 +3006,7 @@ apiRouter.get(
   }
 );
 
-apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+apiRouter.patch('/admin/organizations/:id/status', requirePlatformAdmin(), requirePlatformCapability('CUSTOMER_MANAGE'), async (request: AuthRequest, response, next) => {
   try {
     const { suspended, reason } = adminOrgStatusBodySchema.parse(request.body);
     const ip = getClientIp(request);
@@ -3103,13 +3148,103 @@ apiRouter.use(
   })
 );
 
-apiRouter.get('/admin/audit-logs', requirePlatformAdmin(), async (request: AuthRequest, response, next) => {
+apiRouter.get('/admin/audit-logs', requirePlatformAdmin(), requirePlatformCapability('AUDIT_LOG_VIEW'), async (request: AuthRequest, response, next) => {
   try {
     const cursor = request.query.cursor as string | undefined;
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
     const resourceType = request.query.resourceType as string | undefined;
     const result = await adminService.listAdminAuditLogs({ cursor, limit, resourceType });
     response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// CONTROL PLANE PHASE: internal RBAC administration
+// ==========================================
+
+apiRouter.get('/admin/platform-roles', requirePlatformAdmin(), requirePlatformCapability('PLATFORM_ROLE_MANAGE'), async (_request: AuthRequest, response, next) => {
+  try {
+    const users = await platformRoleService.listPlatformUsers();
+    response.json({ success: true, data: { items: users } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const platformRoleBodySchema = z.object({
+  role: z.enum(['OWNER', 'FINANCE', 'OPERATIONS', 'SECURITY', 'SUPPORT', 'ANALYST']).nullable().optional(),
+  capabilities: z
+    .array(z.enum(['FINANCE_VIEW', 'REFUND_ISSUE', 'OPERATIONS_VIEW', 'OPERATIONS_MANAGE', 'CUSTOMER_360_VIEW', 'SECURITY_VIEW', 'PLATFORM_VIEW', 'CUSTOMER_VIEW', 'CUSTOMER_MANAGE', 'AUDIT_LOG_VIEW', 'PLATFORM_ROLE_MANAGE']))
+    .optional(),
+  currentPassword: z.string().min(1),
+});
+
+apiRouter.patch(
+  '/admin/platform-roles/:userId',
+  requirePlatformAdmin(),
+  requirePlatformCapability('PLATFORM_ROLE_MANAGE'),
+  async (request: AuthRequest, response, next) => {
+    try {
+      const input = platformRoleBodySchema.parse(request.body);
+      const updated = await platformRoleService.setPlatformRoleAndCapabilities({
+        actorUserId: request.auth!.sub,
+        targetUserId: request.params.userId,
+        role: input.role as PlatformRole | null | undefined,
+        capabilities: input.capabilities as PlatformCapability[] | undefined,
+        currentPassword: input.currentPassword,
+        ipAddress: getClientIp(request),
+      });
+      response.json({ success: true, data: updated });
+    } catch (error) {
+      if (error instanceof PlatformRoleValidationError) {
+        return response.status(400).json({ success: false, error: { code: error.code, message: error.message } });
+      }
+      next(error);
+    }
+  }
+);
+
+// ==========================================
+// CONTROL PLANE PHASE: security event control plane
+// ==========================================
+
+apiRouter.get('/admin/security-events', requirePlatformAdmin(), requirePlatformCapability('SECURITY_VIEW'), async (request: AuthRequest, response, next) => {
+  try {
+    const q = request.query;
+    const result = await adminSecurityEventService.listSecurityEvents({
+      type: q.type as string | undefined,
+      organizationId: q.organizationId as string | undefined,
+      userId: q.userId as string | undefined,
+      from: q.from ? new Date(q.from as string) : undefined,
+      to: q.to ? new Date(q.to as string) : undefined,
+      cursor: q.cursor as string | undefined,
+      limit: q.limit ? Number(q.limit) : undefined,
+    });
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// CONTROL PLANE PHASE: operations summary (thin layer over Bull Board)
+// ==========================================
+
+apiRouter.get('/admin/operations/summary', requirePlatformAdmin(), requirePlatformCapability('OPERATIONS_VIEW'), async (_request: AuthRequest, response, next) => {
+  try {
+    const summary = await getOperationsSummary({
+      audit: auditQueue,
+      monitoring: monitoringQueue,
+      vault: vaultQueue,
+      report: reportQueue,
+      webhook: webhookQueue,
+      'agency-competitor': competitorQueue,
+      'agency-prospect': prospectQueue,
+      'agency-pitch': pitchQueue,
+    });
+    response.json({ success: true, data: summary });
   } catch (error) {
     next(error);
   }
